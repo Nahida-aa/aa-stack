@@ -1,0 +1,13 @@
+[package]
+name = "theme_settings_gpui"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+gpui.workspace = true
+aa_theme_gpui.workspace = true
+
+[lints]
+workspace = true

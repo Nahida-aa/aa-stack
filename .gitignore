@@ -1,0 +1,21 @@
+# Rust
+target/
+
+# Node
+node_modules/
+
+.agents/*.local.md
+*.local.md
+
+# TanStack Router generated
+.tanstack/
+**/.tanstack/
+
+/tmp/
+.delta/
+__pycache__/
+*.pyc
+.skill/
+.cursor/rules/skill-context.md
+.windsurf/rules/skill-context.md
+.claude/commands/

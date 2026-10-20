@@ -1,0 +1,754 @@
+//! component/tooltip：悬浮提示（对齐 zed `Tooltip`）。
+//!
+//! 由两部分组成：
+//!
+//! - [`Tooltip`]：一个 `ManagedView`，渲染为悬浮卡片（`elevated_surface_background`
+//!   圆角底色，可带标题 / 次要说明 / 快捷键提示），与 zed `Tooltip::text`、
+//!   `Tooltip::with_key_binding` 对齐。
+//! - [`TooltipHost`]：自定义 gpui `Element`，把任意 trigger 子元素包起来，在
+//!   鼠标**悬停触发元素**一小段时间（默认 500ms）后在元素下方弹出 [`Tooltip`]，
+//!   离开元素 / 任意按下 / 鼠标移出窗口时隐藏。仿照
+//!   [`RightClickMenu`](crate::components::context_menu::RightClickMenu) 的实现骨架
+//!   （`anchored()` + `deferred(priority=1)` 浮层），触发从右键改为 hover 计时。
+//!
+//! 用法（与 zed 的 `IconButton::tooltip` 同构）：
+//! ```ignore
+//! IconButton::new("term", IconName::Terminal)
+//!     .tooltip(Tooltip::text("Terminal"))
+//!     .on_click(/* ... */)
+//! ```
+
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+    time::Duration,
+};
+
+use gpui::{
+    Anchor, AnyElement, AnyView, App, AppContext, AsyncWindowContext, Bounds, Context, Div,
+    Element, ElementId, FocusHandle, GlobalElementId, Hitbox, HitboxBehavior, InteractiveElement,
+    IntoElement, LayoutId, MouseDownEvent, MouseExitEvent, MouseMoveEvent, ParentElement, Pixels,
+    Point, Render, SharedString, Window, anchored, deferred, div, prelude::*, px,
+};
+
+use aa_theme_gpui::ActiveTheme;
+
+// `elevation_2` / `text_ui` 来自 crate 自己的 StyledExt / StyledTypography trait，
+// 这里是按需引入（本文件顶部用的是 gpui 的 prelude，不含它们）。
+use crate::styles::StyledTypography as _;
+use crate::traits::styled_ext::StyledExt as _;
+// `Label::size` / `Label::color` 来自 `LabelCommon`（zed 的 prelude 里就有，
+// 本文件顶部用的是 gpui 的 prelude，所以单独引入）。
+use crate::LabelCommon as _;
+
+/// 提示标题的两种来源（对齐 zed `Title`）：纯字符串，或回调现场生成元素
+/// （`Tooltip::element` 用，比如标题里塞带样式的富文本）。
+#[derive(Clone, gpui::IntoElement)]
+enum Title {
+    Str(SharedString),
+    Callback(Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>),
+}
+
+impl From<SharedString> for Title {
+    fn from(value: SharedString) -> Self {
+        Title::Str(value)
+    }
+}
+
+impl RenderOnce for Title {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl gpui::IntoElement {
+        match self {
+            Title::Str(title) => title.into_any_element(),
+            Title::Callback(element) => element(window, cx),
+        }
+    }
+}
+
+/// 独立的工具提示视图。由 [`TooltipHost`] 弹出。
+pub struct Tooltip {
+    title: Title,
+    meta: Option<SharedString>,
+    /// 快捷键提示（对齐 zed：存的是 ui 的 [`KeyBinding`] 组件，不是字符串，
+    /// 这样能跟随平台显示 `⌘S` / `Ctrl+S`）。
+    key_binding: Option<crate::KeyBinding>,
+}
+
+impl Tooltip {
+    /// 立即创建一个纯文字提示视图（对齐 zed `Tooltip::simple`）。
+    ///
+    /// 与 [`Self::text`] 的区别：`simple` 直接返回 `AnyView`（当场建实体），
+    /// `text` 返回**工厂闭包**（延迟到需要显示时才建）。`ButtonCommon::tooltip`
+    /// 收的是闭包，所以多数场景用 `text`。
+    pub fn simple(title: impl Into<SharedString>, cx: &mut App) -> AnyView {
+        let title = title.into();
+        cx.new(|_| Tooltip {
+            title: title.into(),
+            meta: None,
+            key_binding: None,
+        })
+        .into()
+    }
+
+    /// 创建纯文字提示；返回能在 `window`/`cx` 现场建实体的工厂函数，
+    /// 可直接传给 [`TooltipHost::tooltip`] / `IconButton::tooltip`。
+    pub fn text(title: impl Into<SharedString>) -> impl Fn(&mut Window, &mut App) -> AnyView {
+        let title = title.into();
+        move |_window: &mut Window, cx: &mut App| {
+            cx.new(|_| Tooltip {
+                title: title.clone().into(),
+                meta: None,
+                key_binding: None,
+            })
+            .into()
+        }
+    }
+
+    /// 带「该 action 的快捷键」的提示，**延迟创建**（对齐 zed
+    /// `Tooltip::for_action_title`）。与 [`Self::for_action`] 的区别：不收
+    /// `cx`，action 先 `boxed_clone`，快捷键推迟到工厂闭包执行时才解析 ——
+    /// 这是 zed 新代码偏好的形式。
+    pub fn for_action_title<T: Into<SharedString>>(
+        title: T,
+        action: &dyn gpui::Action,
+    ) -> impl Fn(&mut Window, &mut App) -> AnyView + use<T> {
+        let title = title.into();
+        let action = action.boxed_clone();
+        move |_, cx: &mut App| {
+            cx.new(|cx| Self {
+                title: Title::Str(title.clone()),
+                meta: None,
+                key_binding: Some(crate::KeyBinding::for_action(action.as_ref(), cx)),
+            })
+            .into()
+        }
+    }
+
+    /// 同 [`Self::for_action_title`]，但快捷键按 `focus_handle` 的上下文匹配
+    /// （对齐 zed `Tooltip::for_action_title_in`）。
+    pub fn for_action_title_in<Str: Into<SharedString>>(
+        title: Str,
+        action: &dyn gpui::Action,
+        focus_handle: &FocusHandle,
+    ) -> impl Fn(&mut Window, &mut App) -> AnyView + use<Str> {
+        let title = title.into();
+        let action = action.boxed_clone();
+        let focus_handle = focus_handle.clone();
+        move |_, cx: &mut App| {
+            cx.new(|cx| Self {
+                title: Title::Str(title.clone()),
+                meta: None,
+                key_binding: Some(crate::KeyBinding::for_action_in(
+                    action.as_ref(),
+                    &focus_handle,
+                    cx,
+                )),
+            })
+            .into()
+        }
+    }
+
+    /// 标题由回调**现场生成元素**的提示（对齐 zed `Tooltip::element`）。
+    ///
+    /// 纯 `SharedString` 标题表达不了的富内容（比如带样式的富文本）走这里；
+    /// 返回形式与 [`Self::text`] 相同：工厂闭包。
+    pub fn element(
+        title: impl Fn(&mut Window, &mut App) -> AnyElement + 'static,
+    ) -> impl Fn(&mut Window, &mut App) -> AnyView {
+        let title = Title::Callback(Rc::new(title));
+        move |_, cx: &mut App| {
+            let title = title.clone();
+            cx.new(|_| Self {
+                title,
+                meta: None,
+                key_binding: None,
+            })
+            .into()
+        }
+    }
+
+    /// 带「该 action 的快捷键」的提示，**立即创建**（对齐 zed `Tooltip::for_action`）。
+    ///
+    /// 与 [`Self::text`] 的区别同 [`Self::simple`]：这个当场建实体，直接返回
+    /// `AnyView`，所以能写成 zed 那种一行传参：
+    /// ```ignore
+    /// IconButton::new("close", IconName::Close)
+    ///     .tooltip(Tooltip::for_action("Close", &menu::Cancel, cx))
+    /// ```
+    /// （`ButtonCommon::tooltip` 收的是**闭包**，那种场景用 [`Self::text`]。）
+    pub fn for_action(
+        title: impl Into<SharedString>,
+        action: &dyn gpui::Action,
+        cx: &mut App,
+    ) -> AnyView {
+        cx.new(|cx| Tooltip {
+            title: Title::Str(title.into()),
+            meta: None,
+            key_binding: Some(crate::KeyBinding::for_action(action, cx)),
+        })
+        .into()
+    }
+
+    /// 同 [`Self::for_action`]，但快捷键按 `focus_handle` 所在的上下文解析
+    /// （同一个 action 在不同焦点区域可能绑不同键）。对齐 zed `Tooltip::for_action_in`。
+    pub fn for_action_in(
+        title: impl Into<SharedString>,
+        action: &dyn gpui::Action,
+        focus_handle: &FocusHandle,
+        cx: &mut App,
+    ) -> AnyView {
+        let focus_handle = focus_handle.clone();
+        cx.new(|cx| Tooltip {
+            title: Title::Str(title.into()),
+            meta: None,
+            key_binding: Some(crate::KeyBinding::for_action_in(action, &focus_handle, cx)),
+        })
+        .into()
+    }
+
+    /// 带快捷键提示的提示（工厂形式）。`key_binding` 是 ui 的 [`KeyBinding`]
+    /// 组件（可用 `KeyBinding::for_action(action, cx)` 得到）。
+    pub fn with_key_binding(
+        title: impl Into<SharedString>,
+        key_binding: crate::KeyBinding,
+    ) -> impl Fn(&mut Window, &mut App) -> AnyView {
+        let title = title.into();
+        move |_window: &mut Window, cx: &mut App| {
+            cx.new(|_| Tooltip {
+                title: title.clone().into(),
+                meta: None,
+                key_binding: Some(key_binding.clone()),
+            })
+            .into()
+        }
+    }
+
+    /// 带次要说明（第二行小字）的提示 —— **立即创建**（对齐 zed `Tooltip::with_meta`）。
+    ///
+    /// 签名为 `(title, action, meta, cx)`：`action` 有值时会把它的快捷键
+    /// 一并显示出来（等价于 zed 的 `key_binding` 字段）。
+    ///
+    /// 用法与 zed 同形：
+    /// ```ignore
+    /// ButtonLike::new("swatch").tooltip(move |_window, cx| {
+    ///     Tooltip::with_meta("Sunset", None, "#ff8800", cx)
+    /// })
+    /// ```
+    pub fn with_meta(
+        title: impl Into<SharedString>,
+        action: Option<&dyn gpui::Action>,
+        meta: impl Into<SharedString>,
+        cx: &mut App,
+    ) -> AnyView {
+        let key_binding = action.map(|action| crate::KeyBinding::for_action(action, cx));
+        let (title, meta) = (title.into(), meta.into());
+        cx.new(|_| Tooltip {
+            title: title.into(),
+            meta: Some(meta),
+            key_binding,
+        })
+        .into()
+    }
+
+    /// 同 [`Self::with_meta`]，但快捷键按 `focus_handle` 的上下文匹配
+    /// （对齐 zed `Tooltip::with_meta_in`）。
+    pub fn with_meta_in(
+        title: impl Into<SharedString>,
+        action: Option<&dyn gpui::Action>,
+        meta: impl Into<SharedString>,
+        focus_handle: &FocusHandle,
+        cx: &mut App,
+    ) -> AnyView {
+        let key_binding =
+            action.map(|action| crate::KeyBinding::for_action_in(action, focus_handle, cx));
+        let (title, meta) = (title.into(), meta.into());
+        cx.new(|_| Tooltip {
+            title: title.into(),
+            meta: Some(meta),
+            key_binding,
+        })
+        .into()
+    }
+
+    /// 构造器形态的纯文字提示：先 `new` 再用 [`Self::meta`] /
+    /// [`Self::key_binding`] 叠加（对齐 zed `Tooltip::new`）。
+    pub fn new(title: impl Into<SharedString>) -> Self {
+        Self {
+            title: title.into().into(),
+            meta: None,
+            key_binding: None,
+        }
+    }
+
+    /// 同 [`Self::new`]，但标题由回调现场生成元素
+    /// （对齐 zed `Tooltip::new_element`）。
+    pub fn new_element(title: impl Fn(&mut Window, &mut App) -> AnyElement + 'static) -> Self {
+        Self {
+            title: Title::Callback(Rc::new(title)),
+            meta: None,
+            key_binding: None,
+        }
+    }
+
+    /// 叠加次要说明（对齐 zed `Tooltip::meta`）。
+    pub fn meta(mut self, meta: impl Into<SharedString>) -> Self {
+        self.meta = Some(meta.into());
+        self
+    }
+
+    /// 叠加快捷键提示（对齐 zed `Tooltip::key_binding`）。
+    pub fn key_binding(mut self, key_binding: impl Into<Option<crate::KeyBinding>>) -> Self {
+        self.key_binding = key_binding.into();
+        self
+    }
+}
+
+impl Render for Tooltip {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        tooltip_container(cx, |el, _| {
+            el.child(
+                crate::h_flex()
+                    .gap_4()
+                    .child(div().max_w_72().child(self.title.clone()))
+                    .when_some(self.key_binding.clone(), |this, key_binding| {
+                        this.justify_between().child(key_binding)
+                    }),
+            )
+            .when_some(self.meta.clone(), |this, meta| {
+                this.child(
+                    div().max_w_72().child(
+                        crate::Label::new(meta)
+                            .size(crate::LabelSize::Small)
+                            .color(crate::Color::Muted),
+                    ),
+                )
+            })
+        })
+    }
+}
+
+/// 工具提示宿主：包裹 trigger 元素，悬停一小段时间后在其下方弹出提示。
+pub struct TooltipHost {
+    id: ElementId,
+    /// trigger 子元素构建（首次 request_layout 消费一次）。
+    child_builder: Option<Box<dyn FnOnce(bool, &mut Window, &mut App) -> AnyElement + 'static>>,
+    /// hover 延迟结束后现场创建提示视图。
+    ///
+    /// 与 zed 一致收 `AnyView`（不是 `Entity<Tooltip>`）—— 这样
+    /// `Tooltip::text(..)` / `Tooltip::with_meta(.., cx)` / 任意自定义视图
+    /// 都能直接塞进来。
+    tooltip_builder: Option<Rc<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>>,
+    /// 悬停多久后显示提示。
+    hover_delay: Duration,
+    /// 提示哪一角对齐锚点（默认 `Anchor::TopLeft`）。
+    anchor: Option<Anchor>,
+    /// 锚点取自 trigger 的哪个角（默认 `Anchor::BottomLeft`，即提示在元素下方）。
+    attach: Option<Anchor>,
+}
+
+impl TooltipHost {
+    /// 用给定 id 新建宿主（id 在同一父容器内需唯一）。
+    pub fn new(id: impl Into<ElementId>) -> Self {
+        TooltipHost {
+            id: id.into(),
+            child_builder: None,
+            tooltip_builder: None,
+            hover_delay: Duration::from_millis(500),
+            anchor: None,
+            attach: None,
+        }
+    }
+
+    /// 悬停延迟（默认 500ms，对齐 zed 观感）。
+    pub fn hover_delay(mut self, delay: Duration) -> Self {
+        self.hover_delay = delay;
+        self
+    }
+
+    /// 设定提示工厂（`Tooltip::text(...)` 等）。
+    pub fn tooltip(mut self, f: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
+        self.tooltip_builder = Some(Rc::new(f));
+        self
+    }
+
+    /// 设定 trigger（悬停时 `is_active` 可用于高亮）。
+    pub fn trigger<F, E>(mut self, e: F) -> Self
+    where
+        F: FnOnce(bool, &mut Window, &mut App) -> E + 'static,
+        E: IntoElement + 'static,
+    {
+        self.child_builder = Some(Box::new(move |is_active, window, cx| {
+            e(is_active, window, cx).into_any_element()
+        }));
+        self
+    }
+
+    /// 提示哪一角锚定到锚点（默认 `Anchor::TopLeft`）。
+    pub fn anchor(mut self, anchor: Anchor) -> Self {
+        self.anchor = Some(anchor);
+        self
+    }
+
+    /// 锚点取 trigger 的哪个角（默认 `Anchor::BottomLeft`，提示在元素下方）。
+    pub fn attach(mut self, attach: Anchor) -> Self {
+        self.attach = Some(attach);
+        self
+    }
+
+    fn with_element_state<R>(
+        &mut self,
+        global_id: &GlobalElementId,
+        window: &mut Window,
+        cx: &mut App,
+        f: impl FnOnce(&mut Self, &mut TooltipHandleElementState, &mut Window, &mut App) -> R,
+    ) -> R {
+        window.with_optional_element_state::<TooltipHandleElementState, _>(
+            Some(global_id),
+            |element_state, window| {
+                let mut element_state = element_state.unwrap().unwrap_or_default();
+                let result = f(self, &mut element_state, window, cx);
+                (result, Some(element_state))
+            },
+        )
+    }
+}
+
+/// 创建 [`TooltipHost`]。
+pub fn tooltip_host(id: impl Into<ElementId>) -> TooltipHost {
+    TooltipHost::new(id)
+}
+
+/// 每个宿主元素实例的运行时状态：当前显示的提示、定位点、hover/计时标志。
+pub struct TooltipHandleElementState {
+    tip: Rc<RefCell<Option<AnyView>>>,
+    position: Rc<RefCell<Point<Pixels>>>,
+    hover: Rc<Cell<bool>>,
+    timer_active: Rc<Cell<bool>>,
+}
+
+impl Clone for TooltipHandleElementState {
+    fn clone(&self) -> Self {
+        Self {
+            tip: Rc::clone(&self.tip),
+            position: Rc::clone(&self.position),
+            hover: Rc::clone(&self.hover),
+            timer_active: Rc::clone(&self.timer_active),
+        }
+    }
+}
+
+impl Default for TooltipHandleElementState {
+    fn default() -> Self {
+        Self {
+            tip: Rc::default(),
+            position: Rc::new(RefCell::new(Point::new(px(0.0), px(0.0)))),
+            hover: Rc::default(),
+            timer_active: Rc::default(),
+        }
+    }
+}
+
+pub struct RequestLayoutState {
+    child_layout_id: Option<LayoutId>,
+    child_element: Option<AnyElement>,
+    tooltip_element: Option<AnyElement>,
+}
+
+pub struct PrepaintState {
+    hitbox: Hitbox,
+}
+
+impl Element for TooltipHost {
+    type RequestLayoutState = RequestLayoutState;
+    type PrepaintState = PrepaintState;
+
+    fn id(&self) -> Option<ElementId> {
+        Some(self.id.clone())
+    }
+
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        id: Option<&GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (gpui::LayoutId, Self::RequestLayoutState) {
+        self.with_element_state(
+            id.unwrap(),
+            window,
+            cx,
+            |this, element_state, window, cx| {
+                let mut tooltip_layout_id = None;
+
+                let tooltip_element = element_state.tip.borrow_mut().as_mut().map(|tip| {
+                    let mut anchored = anchored().snap_to_window_with_margin(px(8.0));
+                    if let Some(anchor) = this.anchor {
+                        anchored = anchored.anchor(anchor);
+                    }
+                    anchored = anchored.position(*element_state.position.borrow());
+
+                    let mut element = deferred(anchored.child(div().occlude().child(tip.clone())))
+                        .with_priority(1)
+                        .into_any();
+
+                    tooltip_layout_id = Some(element.request_layout(window, cx));
+                    element
+                });
+
+                let mut child_element = this.child_builder.take().map(|child_builder| {
+                    (child_builder)(element_state.tip.borrow().is_some(), window, cx)
+                });
+
+                let child_layout_id = child_element
+                    .as_mut()
+                    .map(|child_element| child_element.request_layout(window, cx));
+
+                let layout_id = window.request_layout(
+                    gpui::Style::default(),
+                    tooltip_layout_id.into_iter().chain(child_layout_id),
+                    cx,
+                );
+
+                (
+                    layout_id,
+                    RequestLayoutState {
+                        child_element,
+                        child_layout_id,
+                        tooltip_element,
+                    },
+                )
+            },
+        )
+    }
+
+    fn prepaint(
+        &mut self,
+        id: Option<&GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        request_layout: &mut Self::RequestLayoutState,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> PrepaintState {
+        let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
+
+        let child_bounds = request_layout
+            .child_layout_id
+            .map(|layout_id| window.layout_bounds(layout_id));
+
+        // 每次布局后把锚点刷新到 trigger 元素的指定角。
+        self.with_element_state(
+            id.unwrap(),
+            window,
+            cx,
+            |this, element_state, _window, _cx| {
+                if let Some(child_bounds) = child_bounds {
+                    let attach = this.attach.unwrap_or(Anchor::BottomLeft);
+                    // Zed tooltip offset: 鼠标/锚点 + 内部 padding (pl_2=8pt, pt_2p5=10pt)
+                    // → tooltip 卡片实际出现在 offset 之后。我们这里给额外 gap 避免紧贴。
+                    let gap = px(8.0);
+                    let position = match attach {
+                        // 上方弹出：锚点取 trigger 顶部，tooltip 的 anchor 取 Bottom（卡片底部对齐锚点）
+                        // 所以 position = top - gap（往上偏移 gap，让 tooltip 底部刚好在锚点上方 gap 处）
+                        Anchor::TopLeft | Anchor::TopRight => {
+                            child_bounds.corner(attach) - Point::new(px(0.0), gap)
+                        }
+                        // 下方弹出：锚点取 trigger 底部，+ gap 往下
+                        _ => child_bounds.corner(attach) + Point::new(px(0.0), gap),
+                    };
+                    *element_state.position.borrow_mut() = position;
+                }
+            },
+        );
+
+        if let Some(child) = request_layout.child_element.as_mut() {
+            child.prepaint(window, cx);
+        }
+
+        if let Some(tooltip) = request_layout.tooltip_element.as_mut() {
+            tooltip.prepaint(window, cx);
+        }
+
+        PrepaintState { hitbox }
+    }
+
+    fn paint(
+        &mut self,
+        id: Option<&GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
+        _bounds: Bounds<gpui::Pixels>,
+        request_layout: &mut Self::RequestLayoutState,
+        prepaint_state: &mut Self::PrepaintState,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.with_element_state(
+            id.unwrap(),
+            window,
+            cx,
+            |this, element_state, window, cx| {
+                if let Some(mut child) = request_layout.child_element.take() {
+                    child.paint(window, cx);
+                }
+
+                if let Some(mut tooltip) = request_layout.tooltip_element.take() {
+                    tooltip.paint(window, cx);
+                }
+
+                let Some(builder) = this.tooltip_builder.clone() else {
+                    return;
+                };
+
+                let hover_delay = this.hover_delay;
+                let tip = element_state.tip.clone();
+                let hover = element_state.hover.clone();
+                let timer_active = element_state.timer_active.clone();
+                let hitbox_id = prepaint_state.hitbox.id;
+
+                // 悬停计时显示；离开立即隐藏。
+                window.on_mouse_event(move |_event: &MouseMoveEvent, _phase, window, cx| {
+                    let is_hovered = hitbox_id.is_hovered(window);
+                    let was_hovered = hover.get();
+                    hover.set(is_hovered);
+                    if is_hovered == was_hovered {
+                        return;
+                    }
+
+                    if !is_hovered {
+                        if tip.borrow().is_some() {
+                            *tip.borrow_mut() = None;
+                            window.refresh();
+                        }
+                        return;
+                    }
+
+                    if timer_active.get() {
+                        return;
+                    }
+                    timer_active.set(true);
+
+                    let builder = builder.clone();
+                    let tip = tip.clone();
+                    let hover = hover.clone();
+                    let timer_active = timer_active.clone();
+                    window
+                        .spawn(cx, async move |async_cx: &mut AsyncWindowContext| {
+                            async_cx.background_executor().timer(hover_delay).await;
+                            let _ = async_cx.update(|window, cx| {
+                                if !hover.get() {
+                                    timer_active.set(false);
+                                    return;
+                                }
+                                *tip.borrow_mut() = Some((builder)(window, cx));
+                                timer_active.set(false);
+                                window.refresh();
+                            });
+                        })
+                        .detach();
+                });
+
+                // 任意按下 / 移出窗口都收起。
+                let tip_down = element_state.tip.clone();
+                window.on_mouse_event(move |_: &MouseDownEvent, _phase, window, _cx| {
+                    if tip_down.borrow().is_some() {
+                        *tip_down.borrow_mut() = None;
+                        window.refresh();
+                    }
+                });
+                let tip_exit = element_state.tip.clone();
+                let hover_exit = element_state.hover.clone();
+                let timer_exit = element_state.timer_active.clone();
+                window.on_mouse_event(move |_: &MouseExitEvent, _phase, window, _cx| {
+                    hover_exit.set(false);
+                    timer_exit.set(false);
+                    if tip_exit.borrow().is_some() {
+                        *tip_exit.borrow_mut() = None;
+                        window.refresh();
+                    }
+                });
+            },
+        )
+    }
+}
+
+impl IntoElement for TooltipHost {
+    type Element = Self;
+
+    fn into_element(self) -> Self::Element {
+        self
+    }
+}
+
+/// tooltip 的外层容器（对齐 zed `crates/ui/src/components/tooltip.rs:216`）。
+///
+/// 负责三件事：给卡片留出「不贴着鼠标」的左上内边距、套上 elevation 阴影与
+/// UI 字体，然后把内部的 `Div` 交给 `f` 继续拼装。
+pub fn tooltip_container<C>(cx: &mut C, f: impl FnOnce(Div, &mut C) -> Div) -> impl IntoElement
+where
+    // 注意 `Borrow` 只能在这里限定，**不要** `use std::borrow::Borrow;`：本文件
+    // 大量 `Rc<RefCell<..>>` 依赖 `RefCell::borrow()` 这个固有方法，一旦把 trait
+    // 引进作用域，`x.borrow()` 会优先解析到 `Borrow::borrow` 而报 E0277。
+    C: AppContext + std::borrow::Borrow<App>,
+{
+    // zed 这里写 `theme::theme_settings(app).ui_font(app)`；我们 theme 已经有
+    // `ui_font` 便捷函数（未注册设置时回退默认实现，不 panic）。
+    let app = std::borrow::Borrow::borrow(&*cx);
+    let ui_font = aa_theme_gpui::ui_font(app);
+
+    // padding to avoid tooltip appearing right below the mouse cursor
+    div().pl_2().pt_2p5().child(
+        crate::v_flex()
+            .elevation_2(app)
+            .font(ui_font)
+            .text_ui(app)
+            .text_color(app.theme().colors().text)
+            .py_1()
+            .px_2()
+            .map(|el| f(el, cx)),
+    )
+}
+
+/// 长链接预览（照搬 zed `crates/ui/src/components/tooltip.rs:236`，GPL-3.0-or-later）。
+///
+/// 悬停在一个链接上时显示它指向的完整 URL：每 100 字符插一个换行、超过 500
+/// 字符截断为 `…`，避免一个超长 URL 把 tooltip 撑成一条。
+///
+/// 与 zed 无差异（zed 也只给 `Tooltip` 实现了 `Component`，`LinkPreview` 没有）。
+pub struct LinkPreview {
+    link: SharedString,
+}
+
+impl LinkPreview {
+    pub fn new(url: &str, cx: &mut App) -> AnyView {
+        let mut wrapped_url = String::new();
+        for (i, ch) in url.chars().enumerate() {
+            if i == 500 {
+                wrapped_url.push('…');
+                break;
+            }
+            if i % 100 == 0 && i != 0 {
+                wrapped_url.push('\n');
+            }
+            wrapped_url.push(ch);
+        }
+        cx.new(|_| LinkPreview {
+            link: wrapped_url.into(),
+        })
+        .into()
+    }
+}
+
+impl Render for LinkPreview {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        tooltip_container(cx, |el, _| {
+            el.child(
+                crate::Label::new(self.link.clone())
+                    .size(crate::LabelSize::XSmall)
+                    .color(crate::Color::Muted),
+            )
+        })
+    }
+}

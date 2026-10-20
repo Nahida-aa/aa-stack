@@ -1,0 +1,16 @@
+[package]
+name = "aa_icons"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+strum.workspace = true

@@ -1,0 +1,14 @@
+[package]
+name = "_01_add"
+version = "0.1.0"
+edition.workspace = true
+
+
+[dependencies]
+aa_assets_gpui.workspace = true
+aa_theme_gpui.workspace = true
+aa_ui_zed.workspace = true
+iced.workspace = true
+gpui.workspace = true
+gpui_platform.workspace = true
+theme_settings_gpui.workspace = true

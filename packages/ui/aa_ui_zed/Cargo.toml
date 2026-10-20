@@ -1,0 +1,16 @@
+[package]
+name = "aa_ui_zed"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+aa_component_zed.workspace = true
+aa_theme_gpui.workspace = true
+aa_ui_macros_zed.workspace = true
+aa_icons.workspace = true
+documented.workspace = true
+gpui.workspace = true
+gpui_macros.workspace = true
+itertools.workspace = true
+smallvec.workspace = true
+strum.workspace = true
