@@ -10,5 +10,11 @@ aa_theme_gpui.workspace = true
 aa_ui_zed.workspace = true
 iced.workspace = true
 gpui.workspace = true
-gpui_platform.workspace = true
+gpui_platform = { workspace = true, features = [
+    "screen-capture",
+    "font-kit",
+    "wayland",
+    "x11",
+] }
+
 theme_settings_gpui.workspace = true

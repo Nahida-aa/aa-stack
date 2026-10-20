@@ -5,7 +5,7 @@ members = [
     "packages/setting/aa_settings_core", "packages/theme/aa_syntax_theme_gpui", "packages/theme/aa_syntax_theme_iced", "packages/theme/aa_theme_core", "packages/theme/aa_theme_gpui", "packages/theme/aa_theme_iced", "packages/ui/icons", "packages/ui/aa_ui_zed",
     "packages/util/aa_shared_string"
 , "packages/assets/aa_assets_core", "packages/assets/aa_assets_gpui", "packages/assets/aa_assets_iced"
-]
+, "packages/ai/aa_cloud_llm_client", "packages/ai/aa_language_model_core", "packages/util/http_client", "packages/util/util_macros", "packages/util/aa_util_gpui"]
 
 [workspace.package]
 version = "0.1.0"
@@ -16,9 +16,12 @@ publish = false
 [workspace.dependencies]
 aa_assets_core = { path = "packages/assets/aa_assets_core" }
 aa_assets_gpui = { path = "packages/assets/aa_assets_gpui" }
+aa_cloud_llm_client = { path = "packages/ai/aa_cloud_llm_client" }
 aa_component_zed = { path = "packages/ui/aa_ui_zed/aa_component_zed" }
 aa_ui_macros_zed = { path = "packages/ui/aa_ui_zed/aa_ui_macros_zed" }
 aa_ui_zed = { path = "packages/ui/aa_ui_zed" }
+aa_util_gpui = { path = "packages/util/aa_util_gpui" }
+util_macros = { path = "packages/util/util_macros" }
 aa_icons = { path = "packages/ui/icons" }
 aa_shared_string = { path = "packages/util/aa_shared_string" }
 aa_syntax_theme_gpui = { path = "packages/theme/aa_syntax_theme_gpui" }
@@ -27,32 +30,93 @@ aa_theme_gpui = { path = "packages/theme/aa_theme_gpui" }
 theme_settings_gpui = { path = "examples/theme_settings_gpui" }
 
 anyhow = "1.0"
+async-compression = { version = "0.4", features = ["bzip2", "gzip", "futures-io"] }
+async-fs = "2.1"
+
+async-lock = "3.4.2"
+async-tar = { git = "https://github.com/zed-industries/async-tar", rev = "bd3ad6f89df9a9da7a8535958756d6bf465936a0" }
+async_zip = { version = "0.0.18", features = ["deflate", "deflate64"] }
+
+bytes = "1.0"
+
+collections = { git = "https://github.com/zed-industries/zed", rev = "c0199504b9cce79bc27524950022ed701bc3ebd5", version = "=0.1.0" }
+derive_more = { version = "2.1.1", features = [
+    "add",
+    "add_assign",
+    "deref",
+    "deref_mut",
+    "display",
+    "from",
+    "from_str",
+    "mul",
+    "mul_assign",
+    "not",
+] }
+dirs = "6.0"
+
 documented = "0.10"
+futures = "0.3"
+futures-lite = "2"
+globset = "0.4"
+
 gpui = { version = "=0.2.2", git = "https://github.com/zed-industries/zed", rev = "c0199504b9cce79bc27524950022ed701bc3ebd5" }
 gpui_macros = { version = "=0.1.0", git = "https://github.com/zed-industries/zed", rev = "c0199504b9cce79bc27524950022ed701bc3ebd5" }
 gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "c0199504b9cce79bc27524950022ed701bc3ebd5", version = "=0.1.0" }
+gpui_util = { git = "https://github.com/zed-industries/zed", rev = "c0199504b9cce79bc27524950022ed701bc3ebd5", version = "=0.1.0" }
 gpui_shared_string = { git = "https://github.com/zed-industries/zed", rev = "c0199504b9cce79bc27524950022ed701bc3ebd5", version = "=0.1.0" }
+http = "1.1"
+http-body = "1.0"
+
+http_client = { path = "packages/util/http_client" }
 iced = { version = "0.14.0", features = ["canvas", "tokio"] }
 inventory = "0.3"
 itertools = "0.14.0"
-
+log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
+libc = "0.2"
+mach2 = "0.5"
+partial-json-fixer = "=0.5.3"
 palette = { version = "0.7.5", default-features = false, features = ["std"] }
 parking_lot = "0.12"
+path = { git = "https://github.com/zed-industries/zed", rev = "c0199504b9cce79bc27524950022ed701bc3ebd5" }
+perf = { git = "https://github.com/zed-industries/zed", rev = "c0199504b9cce79bc27524950022ed701bc3ebd5" }
+percent-encoding = "2.3.2"
+pretty_assertions = { version = "1.3.0", features = ["unstable"] }
 proc-macro2 = "1"
+nix = "0.30"
 quote = "1"
+rand = "0.9"
+regex = "1"
+
 refineable = { git = "https://github.com/zed-industries/zed", rev = "c0199504b9cce79bc27524950022ed701bc3ebd5" }
 rust-embed = { version = "8.11", features = ["include-exclude", "compression"] }
 schemars = { version = "1.0", default-features = false, features = ["std", "indexmap2"] }
 semver = { version = "1.0", features = ["serde"] }
 serde = { version = "1.0", features = ["rc"] }
 serde_json = { version = "1.0.144", features = ["preserve_order", "raw_value"] }
+serde_json_lenient = { version = "0.2", features = [
+    "preserve_order",
+    "raw_value",
+] }
+serde_urlencoded = "0.7"
+sha2 = "0.10"
+shlex = "1.3.0"
+
 smallvec = { version = "1.6", features = ["union", "const_new"] }
+smol = "2.0"
 strum = { version = "0.28", features = ["derive"] }
 syn = { version = "2", features = ["full"] }
+tempfile = "3"
+take-until = "0.2.0"
+
 tracing = "0.1.40"
 tracing-subscriber = "0.3"
 thiserror = "2.0.12"
+unicase = "2.6"
+
 uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }
+url = "2.2"
+walkdir = "2.5"
+which = "8"
 
 
 [workspace.lints.rust]
