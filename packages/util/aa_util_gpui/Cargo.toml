@@ -29,7 +29,7 @@ take-until.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 serde_json_lenient.workspace = true
-schemars.workspace = true
+schemars = { workspace = true, features = ["derive"] }
 rand = { workspace = true, optional = true }
 util_macros = { workspace = true, optional = true }
 
