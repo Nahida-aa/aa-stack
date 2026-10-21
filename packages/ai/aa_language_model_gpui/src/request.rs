@@ -10,7 +10,7 @@ use gpui_util::ResultExt;
 use image::GenericImageView as _;
 use image::codecs::png::PngEncoder;
 
-use language_model_core::{ImageSize, LanguageModelImage};
+use aa_language_model_core::{ImageSize, LanguageModelImage};
 
 /// Anthropic wants uploaded images to be smaller than this in both dimensions.
 const ANTHROPIC_SIZE_LIMIT: f32 = 1568.;

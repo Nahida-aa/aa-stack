@@ -5,13 +5,13 @@ mod request;
 #[cfg(any(test, feature = "test-support"))]
 pub mod fake_provider;
 
-pub use language_model_core::*;
+pub use aa_language_model_core::*;
 
 use anyhow::Result;
 use futures::{FutureExt, SinkExt};
 use futures::{StreamExt, channel::mpsc, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, App, AsyncApp, BackgroundExecutor, Task, Window};
-use icons::IconName;
+use aa_icons::IconName;
 use parking_lot::Mutex;
 use std::sync::Arc;
 
