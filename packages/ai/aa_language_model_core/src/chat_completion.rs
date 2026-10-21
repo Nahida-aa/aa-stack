@@ -593,11 +593,25 @@ impl ChatCompletionEventMapper {
                             continue;
                         };
 
+                        // The arguments can be large and commonly carry local
+                        // absolute paths, so log a bounded preview rather than
+                        // the whole payload.
+                        let preview_len = tool_call
+                            .arguments
+                            .char_indices()
+                            .nth(MAX_LOGGED_ARGUMENTS_CHARS)
+                            .map_or(tool_call.arguments.len(), |(index, _)| index);
                         log::error!(
-                            "Provider returned a tool call with an empty id or name (id: {:?}, name: {:?}, arguments: {:?})",
+                            "Provider returned a tool call with an empty id or name (id: {:?}, name: {:?}, arguments: {}{}, arguments_len: {})",
                             tool_call.id,
                             tool_call.name,
-                            tool_call.arguments,
+                            &tool_call.arguments[..preview_len],
+                            if preview_len < tool_call.arguments.len() {
+                                "…"
+                            } else {
+                                ""
+                            },
+                            tool_call.arguments.len(),
                         );
                         malformed.get_or_insert_with(|| {
                             LanguageModelCompletionError::InvalidProviderOutput { message: reason }
@@ -639,6 +653,9 @@ fn push_thinking_event(
         }));
     }
 }
+
+/// Number of argument characters logged for a rejected tool call.
+const MAX_LOGGED_ARGUMENTS_CHARS: usize = 200;
 
 /// Returns why a streamed tool call whose identity never arrived is rejected,
 /// or `None` when both an id and a name are present.
