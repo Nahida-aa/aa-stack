@@ -5,7 +5,7 @@ members = [
     "packages/setting/aa_settings_core", "packages/theme/aa_syntax_theme_gpui", "packages/theme/aa_syntax_theme_iced", "packages/theme/aa_theme_core", "packages/theme/aa_theme_gpui", "packages/theme/aa_theme_iced", "packages/ui/icons", "packages/ui/aa_ui_zed",
     "packages/util/aa_shared_string"
 , "packages/assets/aa_assets_core", "packages/assets/aa_assets_gpui", "packages/assets/aa_assets_iced"
-, "packages/ai/aa_cloud_llm_client", "packages/ai/aa_language_model_core", "packages/util/http_client", "packages/util/util_macros", "packages/util/aa_util_gpui", "packages/ai/aa_language_model_gpui", "packages/util/env_var"]
+, "packages/ai/aa_cloud_llm_client", "packages/ai/aa_language_model_core", "packages/util/http_client", "packages/util/util_macros", "packages/util/aa_util_gpui", "packages/ai/aa_language_model_gpui", "packages/util/env_var", "packages/ai/web_search_gpui"]
 
 [workspace.package]
 version = "0.1.0"

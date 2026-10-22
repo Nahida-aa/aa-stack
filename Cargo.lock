@@ -8043,6 +8043,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "web_search_gpui"
+version = "0.1.0"
+dependencies = [
+ "aa_cloud_llm_client",
+ "anyhow",
+ "collections",
+ "gpui",
+ "gpui_shared_string",
+]
+
+[[package]]
 name = "weezl"
 version = "0.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
