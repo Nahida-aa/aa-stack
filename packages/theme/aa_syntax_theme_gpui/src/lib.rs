@@ -84,14 +84,6 @@ impl SyntaxTheme {
             .map(|(key, _)| key.as_ref())
     }
 
-    /// 全部 capture 名（对齐 zed `SyntaxTheme::names()`）。
-    ///
-    /// 消费方（如 AAgent 的 theme_settings 测试）用它核对「内置主题带的
-    /// 语法 capture 数是否与 JSON 一致」。
-    pub fn names(&self) -> impl Iterator<Item = &str> {
-        self.capture_name_map.keys().map(|name| name.as_str())
-    }
-
     pub fn highlight_id(&self, capture_name: &str) -> Option<u32> {
         self.capture_name_map
             .range::<str, _>((
@@ -233,12 +225,35 @@ mod bundled_themes {
     }
 
     impl SyntaxTheme {
-        /// Load the "One Dark" syntax theme from the bundled theme JSON.
-        pub fn one_dark() -> Arc<Self> {
-            load_theme(
-                include_str!("../../../assets/themes/one/one.json"),
-                "One Dark",
-            )
+        /// aa-stack 自带的 aa-mauve 主题家族（Latte / Frappé / Macchiato /
+        /// Mocha 四个主题共用同一份 JSON，各有 102 条 syntax capture）。
+        ///
+        /// 路径相对于本源文件：`packages/theme/aa_syntax_theme_gpui/src/`
+        /// 上四层到 workspace 根。搬家时这个相对深度会变，改这里即可。
+        const AA_MAUVE_JSON: &str = include_str!("../../../../assets/themes/aa/aa-mauve.json");
+
+        /// Load the "Aa Latte" (light) syntax theme from the bundled JSON.
+        pub fn aa_latte() -> Arc<Self> {
+            Self::load_aa_mauve("Aa Latte")
+        }
+
+        /// Load the "Aa Frappé" (dark) syntax theme from the bundled JSON.
+        pub fn aa_frappe() -> Arc<Self> {
+            Self::load_aa_mauve("Aa Frappé")
+        }
+
+        /// Load the "Aa Macchiato" (dark) syntax theme from the bundled JSON.
+        pub fn aa_macchiato() -> Arc<Self> {
+            Self::load_aa_mauve("Aa Macchiato")
+        }
+
+        /// Load the "Aa Mocha" (dark) syntax theme from the bundled JSON.
+        pub fn aa_mocha() -> Arc<Self> {
+            Self::load_aa_mauve("Aa Mocha")
+        }
+
+        fn load_aa_mauve(theme_name: &str) -> Arc<Self> {
+            load_theme(Self::AA_MAUVE_JSON, theme_name)
         }
     }
 }
@@ -349,5 +364,44 @@ mod tests {
                 )
             ]))
         );
+    }
+
+    /// bundled-themes 的加载器读的是 workspace 根的 assets JSON，路径与主题
+    /// 名任何一处漂移都会在这里暴露（`load_theme` 对找不到的主题直接 panic）。
+    #[cfg(feature = "bundled-themes")]
+    mod bundled_themes_tests {
+        use super::super::SyntaxTheme;
+
+        /// `SyntaxTheme` 上游没有 names()，用 `get_capture_name` 按索引数：
+        /// capture_name_map 的 value 从 0 连续分配，数到第一个空洞即总数。
+        fn capture_count(theme: &SyntaxTheme) -> usize {
+            let mut count = 0;
+            while theme.get_capture_name(count).is_some() {
+                count += 1;
+            }
+            count
+        }
+
+        #[test]
+        fn aa_mauve_themes_carry_the_full_syntax_table() {
+            for (name, theme) in [
+                ("Aa Latte", SyntaxTheme::aa_latte()),
+                ("Aa Frappé", SyntaxTheme::aa_frappe()),
+                ("Aa Macchiato", SyntaxTheme::aa_macchiato()),
+                ("Aa Mocha", SyntaxTheme::aa_mocha()),
+            ] {
+                assert_eq!(
+                    capture_count(&theme),
+                    102,
+                    "{name} 的 capture 数应与 aa-mauve.json 一致"
+                );
+                for capture in ["keyword", "function.method", "variable.member", "type.builtin"] {
+                    assert!(
+                        theme.style_for_name(capture).is_some(),
+                        "{name} 应能取到 {capture} 的样式"
+                    );
+                }
+            }
+        }
     }
 }
