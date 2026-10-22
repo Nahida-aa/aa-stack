@@ -62,7 +62,7 @@ futures = "0.3"
 futures-lite = "2"
 globset = "0.4"
 
-gpui = { version = "=0.2.2", git = "https://github.com/zed-industries/zed", rev = "c0199504b9cce79bc27524950022ed701bc3ebd5" }
+gpui = { version = "=0.2.2", default-features = false, git = "https://github.com/zed-industries/zed", rev = "c0199504b9cce79bc27524950022ed701bc3ebd5" }
 gpui_macros = { version = "=0.1.0", git = "https://github.com/zed-industries/zed", rev = "c0199504b9cce79bc27524950022ed701bc3ebd5" }
 gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "c0199504b9cce79bc27524950022ed701bc3ebd5", version = "=0.1.0" }
 gpui_util = { git = "https://github.com/zed-industries/zed", rev = "c0199504b9cce79bc27524950022ed701bc3ebd5", version = "=0.1.0" }
