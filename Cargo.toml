@@ -5,7 +5,7 @@ members = [
     "packages/setting/aa_settings_core", "packages/theme/aa_syntax_theme_gpui", "packages/theme/aa_syntax_theme_iced", "packages/theme/aa_theme_core", "packages/theme/aa_theme_gpui", "packages/theme/aa_theme_iced", "packages/ui/icons", "packages/ui/aa_ui_zed",
     "packages/util/aa_shared_string"
 , "packages/assets/aa_assets_core", "packages/assets/aa_assets_gpui", "packages/assets/aa_assets_iced"
-, "packages/ai/aa_cloud_llm_client", "packages/ai/aa_language_model_core", "packages/util/http_client", "packages/util/util_macros", "packages/util/aa_util_gpui", "packages/ai/aa_language_model_gpui", "packages/util/env_var", "packages/ai/web_search_gpui"]
+, "packages/ai/aa_cloud_llm_client", "packages/ai/aa_language_model_core", "packages/util/http_client", "packages/util/util_macros", "packages/util/aa_util_gpui", "packages/ai/aa_language_model_gpui", "packages/util/env_var", "packages/ai/web_search_gpui", "packages/apps/aa-bundle"]
 
 [workspace.package]
 version = "0.1.0"
@@ -39,6 +39,8 @@ async-tar = { git = "https://github.com/zed-industries/async-tar", rev = "bd3ad6
 async_zip = { version = "0.0.18", features = ["deflate", "deflate64"] }
 base64 = "0.22"
 bytes = "1.0"
+# aa-bundle（packages/apps）的 CLI 与配置解析。
+clap = { version = "4", features = ["derive"] }
 
 collections = { git = "https://github.com/zed-industries/zed", rev = "c0199504b9cce79bc27524950022ed701bc3ebd5", version = "=0.1.0" }
 credentials_provider = { git = "https://github.com/zed-industries/zed", rev = "c0199504b9cce79bc27524950022ed701bc3ebd5" }
@@ -129,6 +131,8 @@ strum = { version = "0.28", features = ["derive"] }
 syn = { version = "2", features = ["full"] }
 tempfile = "3"
 take-until = "0.2.0"
+# aa-bundle 的 bundle 元数据（bundle.toml）解析。
+toml = "0.8"
 
 tracing = "0.1.40"
 tracing-subscriber = "0.3"
