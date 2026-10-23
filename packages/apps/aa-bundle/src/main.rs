@@ -126,7 +126,9 @@ fn main() -> Result<()> {
         }
         Format::TarGz => {
             if cli.common.prebuilt {
-                println!("提示：tar.gz 本就是预编译打包（只安装已编好的二进制），--prebuilt 无额外作用。");
+                println!(
+                    "提示：tar.gz 本就是预编译打包（只安装已编好的二进制），--prebuilt 无额外作用。"
+                );
             }
             let opts = aa_bundle::formats::targz::TargzOptions {
                 project_dir: &cli.common.project_dir,

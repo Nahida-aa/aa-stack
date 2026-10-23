@@ -131,7 +131,8 @@ pub struct TargzOptions<'a> {
 /// 生成 tar.gz，返回产物路径。
 pub fn generate(opts: &TargzOptions) -> Result<PathBuf> {
     let info = super::pkgbuild::read_package_info(opts.project_dir)?;
-    let meta: BundleMeta = crate::meta::load_bundle_meta_layered(&opts.bundle_meta, opts.project_dir)?;
+    let meta: BundleMeta =
+        crate::meta::load_bundle_meta_layered(&opts.bundle_meta, opts.project_dir)?;
     let bin = super::pkgbuild::resolve_bin_name(&info, opts.bin_name, opts.project_dir)?;
     let icon = resolve_icon_name(opts.icon_name, bin);
 

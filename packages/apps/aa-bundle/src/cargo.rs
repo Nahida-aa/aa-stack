@@ -72,19 +72,17 @@ mod tests {
     fn resolve_binary_path_uses_target_dir_and_profile_dir() {
         // 与既有 subprocess 测试同模式：临时目录里 cargo metadata 问出
         // target_directory（= <dir>/target），拼 <profile 目录>/<bin>。
-        let dir = std::env::temp_dir().join(format!(
-            "aa-bundle-cargo-{}-bin_path",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("aa-bundle-cargo-{}-bin_path", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\nversion = \"0.1.0\"\n")
-            .unwrap();
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            "[package]\nname = \"x\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
         let p = resolve_binary_path(&dir, "aacode", "release-quick");
-        assert_eq!(
-            p,
-            dir.join("target").join("release-quick").join("aacode")
-        );
+        assert_eq!(p, dir.join("target").join("release-quick").join("aacode"));
         // dev 落 debug 目录
         let p = resolve_binary_path(&dir, "aacode", "dev");
         assert_eq!(p, dir.join("target").join("debug").join("aacode"));
