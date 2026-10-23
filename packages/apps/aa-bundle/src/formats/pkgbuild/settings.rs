@@ -1,10 +1,10 @@
-//! Arch 打包设置：`[bundle.arch]` 子表解析、bin 名推导、默认输出目录。
+//! Arch 打包设置：`[bundle.arch]` 子表解析与 pkgbuild 的默认输出目录。
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 
-use super::manifest::{PackageInfo, read_package_info};
+use crate::cargo::{read_package_info, resolve_bin_name};
 
 /// Arch 打包参数的最终取值：`[bundle.arch]` 子表 > 命令行覆盖 > 默认值。
 ///
@@ -72,35 +72,6 @@ pub(super) fn arch_settings_from(
     }
     s
 }
-/// bin 名的推导链（对齐 cargo 的自动发现规则）：
-/// 1. 覆盖值（最高优先）
-/// 2. 有 `[[bin]]` 且唯一 → 该目标名（可能与 package.name 不同）
-/// 3. 无 `[[bin]]` → **包名**。这是 cargo 的规则：`src/main.rs` 自动成为以
-///    包名命名的二进制。不是猜，是 cargo 文档化的行为。
-/// 4. 多个 `[[bin]]` → 歧义，报错要求声明
-pub fn resolve_bin_name<'a>(
-    info: &'a PackageInfo,
-    override_name: Option<&'a str>,
-    project_dir: &Path,
-) -> Result<&'a str> {
-    if let Some(b) = override_name {
-        return Ok(b);
-    }
-    match info.bin_count {
-        0 => Ok(info.name.as_str()),
-        1 => Ok(info
-            .bin_name
-            .as_deref()
-            .expect("bin_count==1 时必有 bin_name")),
-        n => bail!(
-            "{} 有 {n} 个 [[bin]] 目标，无法判断该装哪个。\
-             请用 --bin-name 指定，或在 bundle 元数据里加 `[bundle.arch]` 后\
-             用 --bundle-meta 指向含 bin 配置的表。",
-            project_dir.display()
-        ),
-    }
-}
-
 /// pkgbuild 格式的默认输出目录：`<workspace target>/aa-bundle/pkgbuild/<bin>/`。
 ///
 /// 不放在 crate 目录的 `target/` 下——workspace 成员的 target 由 workspace

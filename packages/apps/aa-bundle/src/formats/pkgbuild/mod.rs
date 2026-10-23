@@ -25,15 +25,14 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 
+use crate::cargo::{read_package_info, resolve_bin_name};
 use crate::meta::BundleMeta;
 
-mod manifest;
 mod settings;
 #[cfg(test)]
 mod tests;
 
-pub use manifest::{PackageInfo, read_package_info};
-pub use settings::{ArchSettings, default_out_dir, resolve_bin_name};
+pub use settings::{ArchSettings, default_out_dir};
 // generate_pkgbuild 与 tests 用；对外不公开（子表解析是内部细节）。
 use settings::arch_settings_from;
 

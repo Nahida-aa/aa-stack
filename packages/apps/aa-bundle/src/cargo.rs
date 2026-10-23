@@ -1,9 +1,17 @@
-//! cargo 构建环境查询：target 目录、profile 目录名、产物路径。
+//! cargo 构建环境查询：target 目录、profile 目录名、产物路径、 crate 清单。
 //!
-//! 这里只**问** cargo / 拼路径，不执行构建——构建是项目自己的事
-//! （aa-bundle 只打包）。
+//! 这里只**问** cargo / 读 manifest / 拼路径，不执行构建——构建是项目自己的事
+//! （aa-bundle 只打包）。两类查询被各打包格式共用（pkgbuild / tar.gz 都依赖
+//! 本模块，格式之间互不依赖）：
+//!
+//! - **构建环境**：target 目录 / profile 目录名 / 产物路径
+//! - **crate 清单**：`read_package_info` 读项目 Cargo.toml 取打包元数据，
+//!   `resolve_bin_name` 按 cargo 的自动发现规则定安装哪个二进制
 
 use std::path::{Path, PathBuf};
+
+use anyhow::{Context, Result, bail};
+use serde::Deserialize;
 
 /// cargo 的 `target_directory`：`cargo metadata --no-deps` 问出。
 ///
@@ -50,6 +58,155 @@ pub fn resolve_binary_path(project_dir: &Path, bin: &str, profile: &str) -> Path
     resolve_target_dir(project_dir)
         .join(profile_dir(profile))
         .join(bin)
+}
+
+// ---- crate 清单查询（各格式共用，故住在这里而非某个 format 模块）----
+
+/// crate 的 Cargo.toml 里我们关心的元数据。
+#[derive(Debug, Clone)]
+pub struct PackageInfo {
+    pub name: String,
+    pub version: String,
+    pub description: String,
+    pub license: String,
+    /// `[[bin]]` 目标名。**只有恰好一个 bin 目标时才有值** —— 多个就必须由项目声明，
+    /// 因为 CLI 无从判断该用哪个。
+    pub bin_name: Option<String>,
+    /// `[[bin]]` 目标数量（0 = 纯 lib crate）
+    pub bin_count: usize,
+}
+
+/// `license` 可能是字面量，也可能是 `license.workspace = true`（workspace 继承）。
+/// `workspace` 字段只是用来让 serde 认出这个形状，值本身不读。
+#[allow(dead_code)]
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum StringOrWorkspace {
+    Literal(String),
+    Inherited { workspace: bool },
+}
+
+#[derive(Deserialize)]
+struct CrateManifest {
+    package: Option<CratePackage>,
+    bin: Option<Vec<CrateBin>>,
+}
+
+#[derive(Deserialize)]
+struct CrateBin {
+    name: String,
+}
+
+#[derive(Deserialize)]
+struct CratePackage {
+    name: String,
+    version: String,
+    description: Option<String>,
+    license: Option<StringOrWorkspace>,
+}
+
+#[derive(Deserialize)]
+struct WorkspaceManifest {
+    workspace: Option<WorkspaceTable>,
+}
+
+#[derive(Deserialize)]
+struct WorkspaceTable {
+    package: Option<WorkspacePackage>,
+}
+
+#[derive(Deserialize)]
+struct WorkspacePackage {
+    license: Option<String>,
+}
+
+/// 读 crate 的 Cargo.toml；`license.workspace = true` 时上溯到 workspace 根取值。
+pub fn read_package_info(project_dir: &Path) -> Result<PackageInfo> {
+    let manifest_path = project_dir.join("Cargo.toml");
+    let text = std::fs::read_to_string(&manifest_path)
+        .with_context(|| format!("读取 {} 失败", manifest_path.display()))?;
+    let manifest: CrateManifest =
+        toml::from_str(&text).with_context(|| format!("解析 {} 失败", manifest_path.display()))?;
+    let package = manifest.package.context(
+        "Cargo.toml 没有 [package] 段（传的是 workspace 根？请用 -p 指向具体 crate 目录）",
+    )?;
+
+    let license = match package.license {
+        Some(StringOrWorkspace::Literal(s)) => s,
+        Some(StringOrWorkspace::Inherited { .. }) => find_workspace_root(project_dir)
+            .and_then(|root| {
+                let text = std::fs::read_to_string(root.join("Cargo.toml")).ok()?;
+                let ws: WorkspaceManifest = toml::from_str(&text).ok()?;
+                ws.workspace?.package?.license
+            })
+            .context("license 是 workspace 继承，但没能从 workspace 根解析出值（请在 workspace 根的 [workspace.package] 补 license）")?,
+        None => bail!("Cargo.toml 的 [package] 缺少 license（请在 [package] 补 license = \"...\"，或让 workspace 根继承）"),
+    };
+
+    let bins: Vec<String> = manifest
+        .bin
+        .unwrap_or_default()
+        .into_iter()
+        .map(|b| b.name)
+        .collect();
+
+    Ok(PackageInfo {
+        name: package.name,
+        version: package.version,
+        description: package.description.unwrap_or_default(),
+        license,
+        bin_name: (bins.len() == 1).then(|| bins[0].clone()),
+        bin_count: bins.len(),
+    })
+}
+
+/// 向上找含 `[workspace]` 的 Cargo.toml 所在目录。
+fn find_workspace_root(start: &Path) -> Option<PathBuf> {
+    let mut dir = start.canonicalize().ok()?;
+    loop {
+        let candidate = dir.join("Cargo.toml");
+        if let Ok(text) = std::fs::read_to_string(&candidate) {
+            if toml::from_str::<WorkspaceManifest>(&text)
+                .ok()
+                .and_then(|m| m.workspace)
+                .is_some()
+            {
+                return Some(dir);
+            }
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
+}
+
+/// bin 名的推导链（对齐 cargo 的自动发现规则）：
+/// 1. 覆盖值（最高优先）
+/// 2. 有 `[[bin]]` 且唯一 → 该目标名（可能与 package.name 不同）
+/// 3. 无 `[[bin]]` → **包名**。这是 cargo 的规则：`src/main.rs` 自动成为以
+///    包名命名的二进制。不是猜，是 cargo 文档化的行为。
+/// 4. 多个 `[[bin]]` → 歧义，报错要求声明
+pub fn resolve_bin_name<'a>(
+    info: &'a PackageInfo,
+    override_name: Option<&'a str>,
+    project_dir: &Path,
+) -> Result<&'a str> {
+    if let Some(b) = override_name {
+        return Ok(b);
+    }
+    match info.bin_count {
+        0 => Ok(info.name.as_str()),
+        1 => Ok(info
+            .bin_name
+            .as_deref()
+            .expect("bin_count==1 时必有 bin_name")),
+        n => bail!(
+            "{} 有 {n} 个 [[bin]] 目标，无法判断该装哪个。\
+             请用 --bin-name 指定，或在 bundle 元数据里加 `[bundle.arch]` 后\
+             用 --bundle-meta 指向含 bin 配置的表。",
+            project_dir.display()
+        ),
+    }
 }
 
 #[cfg(test)]

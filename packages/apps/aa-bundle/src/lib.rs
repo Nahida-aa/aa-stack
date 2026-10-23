@@ -10,7 +10,7 @@
 //! | [`meta`] | bundle 元数据结构与解析（对齐 cargo-bundle 的 `BundleSettings`） |
 //! | [`desktop`] | `.desktop` 条目渲染（类别映射 / 模板 / 安装名） |
 //! | [`identity`] | 命名规则（段规范化 / identifier 推导 / 仓库名发现） |
-//! | [`cargo`] | 构建环境查询（target 目录 / profile 目录 / 产物路径） |
+//! | [`cargo`] | 构建环境查询（target 目录 / profile 目录 / 产物路径）+ crate 清单读取（`read_package_info` / `resolve_bin_name`，各格式共用） |
 //! | [`fs`] | 文件 IO 基建（写 / 拷 / 相对路径 / 可执行位） |
 //! | [`formats`] | **打包格式**：一个模块一种输出（`pkgbuild` / `targz`） |
 //!
