@@ -5,7 +5,7 @@ members = [
     "packages/setting/aa_settings_core", "packages/theme/aa_syntax_theme_gpui", "packages/theme/aa_syntax_theme_iced", "packages/theme/aa_theme_core", "packages/theme/aa_theme_gpui", "packages/theme/aa_theme_iced", "packages/ui/icons", "packages/ui/aa_ui_zed",
     "packages/util/aa_shared_string"
 , "packages/assets/aa_assets_core", "packages/assets/aa_assets_gpui", "packages/assets/aa_assets_iced"
-, "packages/ai/aa_cloud_llm_client", "packages/ai/aa_language_model_core", "packages/util/http_client", "packages/util/util_macros", "packages/util/aa_util_gpui", "packages/ai/aa_language_model_gpui", "packages/util/env_var", "packages/ai/web_search_gpui", "packages/apps/aa-bundle"]
+, "packages/ai/aa_cloud_llm_client", "packages/ai/aa_language_model_core", "packages/util/http_client", "packages/util/util_macros", "packages/util/aa_util_gpui", "packages/ai/aa_language_model_gpui", "packages/util/env_var", "packages/ai/web_search_gpui", "packages/apps/aa-bundle", "packages/apps/aa-install", "packages/ui/aa_ui_core", "packages/ui/aa_ui_iced"]
 
 [workspace.package]
 version = "0.1.0"
@@ -19,6 +19,8 @@ aa_assets_gpui = { path = "packages/assets/aa_assets_gpui" }
 aa_cloud_llm_client = { path = "packages/ai/aa_cloud_llm_client" }
 aa_component_zed = { path = "packages/ui/aa_ui_zed/aa_component_zed" }
 aa_language_model_core = { path = "packages/ai/aa_language_model_core" }
+aa_ui_core = { path = "packages/ui/aa_ui_core" }
+aa_ui_iced = { path = "packages/ui/aa_ui_iced" }
 aa_ui_macros_zed = { path = "packages/ui/aa_ui_zed/aa_ui_macros_zed" }
 aa_ui_zed = { path = "packages/ui/aa_ui_zed" }
 aa_util_gpui = { path = "packages/util/aa_util_gpui" }
@@ -27,6 +29,7 @@ aa_icons = { path = "packages/ui/icons" }
 aa_shared_string = { path = "packages/util/aa_shared_string" }
 aa_syntax_theme_gpui = { path = "packages/theme/aa_syntax_theme_gpui" }
 aa_theme_core = { path = "packages/theme/aa_theme_core" }
+aa_theme_iced = { path = "packages/theme/aa_theme_iced" }
 aa_theme_gpui = { path = "packages/theme/aa_theme_gpui" }
 theme_settings_gpui = { path = "examples/theme_settings_gpui" }
 
@@ -74,6 +77,7 @@ http-body = "1.0"
 
 http_client = { path = "packages/util/http_client" }
 iced = { version = "0.14.0", features = ["canvas", "tokio"] }
+iced_test = "0.14.0"
 # image's default features minus "avif", which only adds an encoder (rav1e);
 # decoding AVIF would additionally need the non-default "avif-native" feature.
 image = { version = "0.25.1", default-features = false, features = [
@@ -141,6 +145,9 @@ unicase = "2.6"
 
 uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }
 url = "2.2"
+# aa-bundle --source 的 URL 下载（同步 CLI，无异步运行时；默认 features
+# rustls+gzip，不依赖系统 OpenSSL）。
+ureq = "3"
 walkdir = "2.5"
 which = "8"
 

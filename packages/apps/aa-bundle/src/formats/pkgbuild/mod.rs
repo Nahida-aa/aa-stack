@@ -17,9 +17,16 @@
 //! Arch/pacman 只认 PKGBUILD 与 makepkg 生成的 `.PKGINFO`，从不读 Cargo.toml。
 //! 它只是把「推不出来、又不该每次敲命令行」的设置集中声明。
 //!
-//! **生成的 PKGBUILD 是「本地开发安装」用途**：它直接在源码树里构建（`build()`
-//! 里 cd 回源码目录），不带 `source=`，因此**不能用于分发**（AUR 那种需要真正的
-//! source + checksum）。分发版是后续的事。
+//! ## 两种形态
+//!
+//! - **本地开发安装**（本模块的 `generate_pkgbuild`）：在源码树里构建（`build()`
+//!   里 cd 回源码目录）或装已编好的产物（`--prebuilt`，生成期钉死路径），不带
+//!   `source=`——**只适合本机**，不适合 AUR 分发。
+//! - **AUR `-bin` 分发**（[`upstream`]）：`--source` 给上游 tar.gz（本地路径或
+//!   URL），生成 `source=()` + `sha256sums=()` 的正统 `-bin` PKGBUILD，由 makepkg
+//!   自己下载校验，生成物可以分发给别人。
+//!
+//! 两条路共用身份系统（bundle 元数据）与 .desktop 渲染，只是 payload 来源不同。
 
 use std::path::Path;
 
@@ -31,8 +38,10 @@ use crate::meta::BundleMeta;
 mod settings;
 #[cfg(test)]
 mod tests;
+mod upstream;
 
 pub use settings::{ArchSettings, default_out_dir};
+pub use upstream::{BinPkgOptions, generate_pkgbuild_bin};
 // generate_pkgbuild 与 tests 用；对外不公开（子表解析是内部细节）。
 use settings::arch_settings_from;
 

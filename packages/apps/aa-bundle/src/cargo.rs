@@ -165,14 +165,13 @@ fn find_workspace_root(start: &Path) -> Option<PathBuf> {
     let mut dir = start.canonicalize().ok()?;
     loop {
         let candidate = dir.join("Cargo.toml");
-        if let Ok(text) = std::fs::read_to_string(&candidate) {
-            if toml::from_str::<WorkspaceManifest>(&text)
+        if let Ok(text) = std::fs::read_to_string(&candidate)
+            && toml::from_str::<WorkspaceManifest>(&text)
                 .ok()
                 .and_then(|m| m.workspace)
                 .is_some()
-            {
-                return Some(dir);
-            }
+        {
+            return Some(dir);
         }
         if !dir.pop() {
             return None;

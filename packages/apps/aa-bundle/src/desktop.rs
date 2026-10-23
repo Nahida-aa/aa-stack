@@ -153,7 +153,7 @@ pub fn render_desktop_entry(
     let actions = meta.desktop_actions();
     if !actions.is_empty() {
         let _ = write!(out, "Actions=");
-        for (id, _) in actions {
+        for id in actions.keys() {
             let _ = write!(out, "{id};");
         }
         let _ = writeln!(out);

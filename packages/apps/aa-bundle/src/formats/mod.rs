@@ -1,8 +1,9 @@
 //! 打包格式：一个模块一种输出格式，对应 CLI `--format` 的取值。
 //!
-//! - [`pkgbuild`] —— Arch Linux 的 PKGBUILD（makepkg 的输入）。支持源码打包
-//!   （`build()` 里 `cargo build`）与二进制打包（`--prebuilt`，安装生成期
-//!   钉死的已编好产物）两种模式。
+//! - [`pkgbuild`] —— Arch Linux 的 PKGBUILD（makepkg 的输入）。三种模式：
+//!   源码打包（`build()` 里 `cargo build`）、二进制打包（`--prebuilt`，安装
+//!   生成期钉死的已编好产物）、以及**上游 tarball 重打包**（`--source` +
+//!   `source=()` + `sha256sums=()` 的 AUR `-bin` 形态，见 `pkgbuild::upstream`）。
 //! - [`targz`] —— 自包含 tar.gz 应用包（zed.app 布局，跨发行版）。本就是
 //!   预编译打包：不构建，只安装已存在的二进制。
 //!

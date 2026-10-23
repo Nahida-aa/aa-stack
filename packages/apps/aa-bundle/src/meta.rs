@@ -32,6 +32,9 @@ pub struct BundleMeta {
     pub name: Option<String>,
     pub icon: Option<Vec<String>>,
     pub version: Option<String>,
+    /// 许可证字面量（cargo-bundle 无此字段，是 aa-bundle 自有）：上游 tarball
+    /// 模式（`--source`）下没有 Cargo.toml 可取 license，必须在 bundle 元数据里给。
+    pub license: Option<String>,
     pub copyright: Option<String>,
     pub short_description: Option<String>, // cargo.description, pkgdesc
     pub long_description: Option<String>,

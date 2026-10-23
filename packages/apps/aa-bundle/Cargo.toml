@@ -24,6 +24,13 @@ clap.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 toml.workspace = true
+# --source：URL 下载（ureq，同步）、下载/解包暂存（tempfile）、
+# tarball 校验和（sha2，手写 hex 格式化不引 hex crate）。
+ureq.workspace = true
+tempfile.workspace = true
+sha2.workspace = true
+# 解包后的目录遍历（分类 .desktop / 图标 / ELF）
+walkdir.workspace = true
 
 [lints]
 workspace = true
