@@ -33,6 +33,14 @@ dependencies = [
 [[package]]
 name = "aa-install"
 version = "0.1.0"
+dependencies = [
+ "aa-bundle",
+ "anyhow",
+ "clap",
+ "dirs",
+ "libc",
+ "which",
+]
 
 [[package]]
 name = "aa_assets_core"
