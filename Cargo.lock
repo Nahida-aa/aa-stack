@@ -3,6 +3,10 @@
 version = 4
 
 [[package]]
+name = "_00_concept_atlas"
+version = "0.1.0"
+
+[[package]]
 name = "_01_add"
 version = "0.1.0"
 dependencies = [
@@ -93,9 +97,9 @@ dependencies = [
 name = "aa_github_releases"
 version = "0.1.0"
 dependencies = [
+ "aa_http_client",
  "anyhow",
  "futures",
- "http_client 0.1.0",
  "log",
  "serde",
  "serde_json",
@@ -106,9 +110,12 @@ dependencies = [
 name = "aa_http_client"
 version = "0.1.0"
 dependencies = [
- "aa_reqwest_client",
+ "anyhow",
+ "bytes",
  "futures",
+ "http",
  "http_client 0.1.0",
+ "url",
 ]
 
 [[package]]
@@ -167,10 +174,10 @@ dependencies = [
 name = "aa_reqwest_client"
 version = "0.1.0"
 dependencies = [
+ "aa_http_client",
  "anyhow",
  "bytes",
  "futures",
- "http_client 0.1.0",
  "reqwest",
  "thiserror 2.0.21",
  "tokio",
@@ -269,17 +276,33 @@ dependencies = [
 name = "aa_ui_zed"
 version = "0.1.0"
 dependencies = [
+ "aa_assets_gpui",
  "aa_component_zed",
  "aa_icons",
  "aa_theme_gpui",
  "aa_ui_macros_zed",
  "documented",
+ "futures",
  "gpui",
  "gpui_macros",
+ "gpui_util",
  "itertools 0.14.0",
+ "log",
+ "menu",
+ "num-format",
+ "rand 0.9.5",
+ "schemars",
+ "serde",
+ "serde_json",
  "smallvec",
  "strum",
+ "tracing",
+ "unicode-segmentation",
 ]
+
+[[package]]
+name = "aa_util"
+version = "0.1.0"
 
 [[package]]
 name = "aa_util_gpui"
@@ -4628,6 +4651,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "menu"
+version = "0.1.0"
+source = "git+https://github.com/zed-industries/zed?rev=c0199504b9cce79bc27524950022ed701bc3ebd5#c0199504b9cce79bc27524950022ed701bc3ebd5"
+dependencies = [
+ "gpui",
+]
+
+[[package]]
 name = "metal"
 version = "0.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4995,6 +5026,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "num-format"
+version = "0.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a652d9771a63711fd3c3deb670acfbe5c30a4072e664d7a3bf5a9e1056ac72c3"
+dependencies = [
+ "arrayvec",
+ "itoa",
 ]
 
 [[package]]

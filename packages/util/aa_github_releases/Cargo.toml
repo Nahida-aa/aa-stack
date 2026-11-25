@@ -9,9 +9,9 @@ publish.workspace = true
 doctest = false
 
 [dependencies]
+aa_http_client = { path = "../aa_http_client" }
 anyhow.workspace = true
 futures.workspace = true
-http_client.workspace = true
 log.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

@@ -1,28 +1,21 @@
-//! `http_client::HttpClient` 的 reqwest 实现。
+//! `aa_http_client::HttpClient` 的 reqwest 实现。
 //!
-//! 对应 zed 的 `crates/reqwest_client`：`http_client` 只定义接口（trait +
+//! 对应 zed 的 `crates/reqwest_client`：`aa_http_client` 只定义接口（trait +
 //! [`AsyncBody`]），真正的连接池、代理、超时都在这里。这样上层（provider /
-//! 应用）可以只持有 `Arc<dyn http_client::HttpClient>`，测试时换成
-//! `http_client::FakeHttpClient`（见 `aa_http_client` 的 `test-support` feature）。
+//! 应用）可以只持有 `Arc<dyn aa_http_client::HttpClient>`，测试时换成
+//! `aa_http_client::FakeHttpClient`。
 //!
 //! 超时/keep-alive 取值对齐 zed 的 `ReqwestClient::builder`（commit `4ed72e0135`）：
 //! 10s 建连、30s TCP keep-alive / 连接池空闲回收、HTTP/2 keep-alive 15s/10s。
 //! 区别只在 read timeout：zed 的 LLM 入口传 `None`，这里默认开启
 //! （见 [`DEFAULT_READ_TIMEOUT`]）。
 
-use std::{
-    mem,
-    pin::Pin,
-    sync::OnceLock,
-    task::Poll,
-    time::Duration,
-};
+use std::{mem, pin::Pin, sync::OnceLock, task::Poll, time::Duration};
 
+use aa_http_client::{AsyncBody, Inner, Proxy, RequestTimeout, Response, http};
 use anyhow::anyhow;
 use bytes::{BufMut, Bytes, BytesMut};
 use futures::{AsyncRead, FutureExt as _, TryStreamExt as _};
-use http_client::{AsyncBody, Inner, RequestTimeout, Response, Url, http};
-use reqwest::header::HeaderValue;
 
 /// 建连超时（DNS + TCP + TLS + 代理握手）。
 ///
@@ -52,25 +45,9 @@ pub const HTTP2_KEEP_ALIVE_TIMEOUT: Duration = Duration::from_secs(10);
 /// 不需要的调用方用 [`Builder::without_read_timeout`] 关掉。
 pub const DEFAULT_READ_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// 出站路由。
-///
-/// 「空串 = 读环境变量」「拒绝 socks」这类**用户配置语义**不在这里：本 crate 只
-/// 接收已经解好的选择。`Direct` 是机制（忽略环境变量代理），不是策略。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Proxy {
-    /// 跟随环境变量（`ALL_PROXY` / `HTTPS_PROXY` / `NO_PROXY`），reqwest 默认。
-    Environment,
-    /// 强制直连，忽略环境变量代理。
-    Direct,
-    /// 显式代理 URL（`http://` / `https://`，可带 `user:pass@`）。
-    Explicit(String),
-}
-
-impl Proxy {
-    /// 显式代理。调用方负责先校验/规范化 URL。
-    pub fn explicit(url: impl Into<String>) -> Self {
-        Self::Explicit(url.into())
-    }
+/// 默认策略：跟随环境变量代理 + [`DEFAULT_READ_TIMEOUT`]。
+pub fn builder() -> Builder {
+    Builder::default()
 }
 
 /// [`ReqwestClient`] 的构造参数。
@@ -125,7 +102,6 @@ impl Builder {
             builder = builder.read_timeout(read_timeout);
         }
 
-        let mut resolved_proxy = None;
         match &self.proxy {
             Proxy::Environment => {}
             Proxy::Direct => {
@@ -140,7 +116,6 @@ impl Builder {
                 })?;
                 // 显式代理仍然尊重 NO_PROXY（NO_PROXY 是「哪些主机直连」，与走哪个代理无关）。
                 builder = builder.proxy(proxy.no_proxy(reqwest::NoProxy::from_env()));
-                resolved_proxy = url.parse().ok();
             }
         }
 
@@ -150,7 +125,6 @@ impl Builder {
 
         Ok(ReqwestClient {
             client,
-            proxy: resolved_proxy,
             read_timeout: self.read_timeout,
             handle: current_runtime_handle(),
         })
@@ -179,7 +153,6 @@ pub enum BuildError {
 /// reqwest 客户端句柄（内部是 `reqwest::Client` 的 `Arc`，克隆的是指针）。
 pub struct ReqwestClient {
     client: reqwest::Client,
-    proxy: Option<Url>,
     read_timeout: Option<Duration>,
     /// `send` 必须跑在 tokio runtime 上（reqwest/hyper 的 reactor）；没有就自建一个。
     handle: tokio::runtime::Handle,
@@ -197,29 +170,18 @@ impl ReqwestClient {
     }
 }
 
-impl http_client::HttpClient for ReqwestClient {
-    fn user_agent(&self) -> Option<&HeaderValue> {
-        None
-    }
-
-    fn proxy(&self) -> Option<&Url> {
-        self.proxy.as_ref()
-    }
-
+impl aa_http_client::HttpClient for ReqwestClient {
     fn send(
         &self,
         req: http::Request<AsyncBody>,
-    ) -> futures::future::BoxFuture<
-        'static,
-        anyhow::Result<Response<AsyncBody>>,
-    > {
+    ) -> futures::future::BoxFuture<'static, anyhow::Result<Response<AsyncBody>>> {
         let (parts, body) = req.into_parts();
 
         let mut request_builder = self.client.request(parts.method, parts.uri.to_string());
         request_builder = request_builder.headers(parts.headers);
-        // 注：`http_client` 的 `RedirectPolicy` 扩展在 reqwest 0.12 没有「每请求」
-        // 入口（只有 `ClientBuilder::redirect`）。这里沿用 reqwest 默认（最多跟随
-        // 10 次）；需要 `NoFollow` 的调用方应使用自己的客户端配置。
+        // 注：`RedirectPolicy` 扩展在 reqwest 0.12 没有「每请求」入口（只有
+        // `ClientBuilder::redirect`）。这里沿用 reqwest 默认（最多跟随 10 次）；
+        // 需要 `NoFollow` 的调用方应使用自己的客户端配置。
         if let Some(timeout) = parts.extensions.get::<RequestTimeout>() {
             request_builder = request_builder.timeout(timeout.0);
         }
@@ -476,11 +438,41 @@ fn format_duration(duration: Duration) -> String {
 mod tests {
     use std::io::{Read, Write};
     use std::net::TcpListener;
+    use std::sync::Arc;
 
+    use aa_http_client::{HttpClient as _, Method, Proxy};
     use futures::{AsyncReadExt as _, executor::block_on};
-    use http_client::{HttpClient as _, Method};
 
     use super::*;
+
+    #[test]
+    fn builder_returns_a_shared_dyn_client() {
+        let client: Arc<dyn aa_http_client::HttpClient> = Arc::new(
+            ReqwestClient::builder()
+                .proxy(Proxy::Direct)
+                .read_timeout(Duration::from_millis(150))
+                .build()
+                .expect("直连应该能构造"),
+        );
+        // trait 对象可以直接跨线程共享（provider 的 `Send + Sync` 要求）。
+        let _cloned = client.clone();
+    }
+
+    #[test]
+    fn invalid_proxy_url_is_a_build_error() {
+        let error = match ReqwestClient::builder()
+            .proxy(Proxy::explicit("http://"))
+            .build()
+        {
+            Ok(_) => panic!("坏代理 URL 应该报错"),
+            Err(error) => error,
+        };
+        assert!(
+            matches!(error, BuildError::InvalidProxy { .. }),
+            "应该是 InvalidProxy：{error}"
+        );
+        assert!(error.to_string().contains("代理"), "{error}");
+    }
 
     /// 起一个只回固定字节的本地端点。
     fn serve_once(response: &'static [u8]) -> (std::net::SocketAddr, std::thread::JoinHandle<()>) {

@@ -1,4 +1,4 @@
-//! GitHub release 元数据查询：只依赖 `http_client`，不依赖 gpui。
+//! GitHub release 元数据查询：只依赖 `aa_http_client`，不依赖 gpui。
 //!
 //! 对应上游 zed `crates/github_releases/src/releases.rs`；下载/解压见
 //! `github_releases_gpui`。
