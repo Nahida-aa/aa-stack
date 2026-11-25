@@ -10,22 +10,16 @@ doctest = false
 
 [dependencies]
 aa_github_releases.workspace = true
-aa_util_gpui.workspace = true
+aa_http_client = { path = "../aa_http_client", features = ["http-client-bridge"] }
 anyhow.workspace = true
-async-compression.workspace = true
-async-fs.workspace = true
-async-tar.workspace = true
-futures.workspace = true
 gpui.workspace = true
 http_client.workspace = true
-log.workspace = true
-serde = { workspace = true, features = ["derive"] }
-serde_json.workspace = true
-sha2.workspace = true
-tempfile.workspace = true
 
 [dev-dependencies]
+futures.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
+sha2.workspace = true
+tempfile.workspace = true
 
 [lints]
 workspace = true

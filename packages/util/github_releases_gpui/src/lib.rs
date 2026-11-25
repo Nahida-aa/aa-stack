@@ -1,50 +1,20 @@
-//! GitHub release 资产下载/解压（依赖 gpui 的 `BackgroundExecutor`）。
+//! GitHub release 下载/解压的 gpui 便捷包装（依赖 `BackgroundExecutor`）。
 //!
-//! 对应上游 zed `crates/github_releases/src/github_releases.rs`；release 元数据
-//! 查询见 `aa_github_releases`，这里原样转出以保持与上游一致的导入面。
+//! 真正的异步实现在 `aa_github_releases`（不依赖 gpui）；这里只做两件事：把 zed
+//! 的 `http_client::HttpClient` 适配成 `aa_http_client::HttpClient`，然后把任务
+//! 丢进 gpui 的后台执行器。
 
 pub use aa_github_releases::{
-    AssetKind, GitHubLspBinaryVersion, GithubRelease, GithubReleaseAsset, build_asset_url,
-    get_release_by_tag_name, latest_github_release,
+    AssetKind, GitHubLspBinaryVersion, GithubBinaryMetadata, GithubRelease, GithubReleaseAsset,
+    build_asset_url, get_release_by_tag_name, latest_github_release,
 };
 
-use std::{path::Path, pin::Pin, sync::Arc, task::Poll};
+use std::{path::Path, sync::Arc};
 
-use anyhow::{Context, Result};
-use async_compression::futures::bufread::{BzDecoder, GzipDecoder};
-use futures::{AsyncRead, AsyncSeekExt, AsyncWrite, io::BufReader};
+use aa_http_client::ZedHttpClient;
+use anyhow::Result;
 use gpui::{BackgroundExecutor, Task};
 use http_client::HttpClient;
-use sha2::{Digest, Sha256};
-
-fn sha256_matches(actual: &str, expected: &str) -> bool {
-    actual.eq_ignore_ascii_case(expected)
-}
-
-#[derive(serde::Deserialize, serde::Serialize, Debug)]
-pub struct GithubBinaryMetadata {
-    pub metadata_version: u64,
-    pub digest: Option<String>,
-}
-
-impl GithubBinaryMetadata {
-    pub async fn read_from_file(metadata_path: &Path) -> Result<GithubBinaryMetadata> {
-        let metadata_content = async_fs::read_to_string(metadata_path)
-            .await
-            .with_context(|| format!("reading metadata file at {metadata_path:?}"))?;
-        serde_json::from_str(&metadata_content)
-            .with_context(|| format!("parsing metadata file at {metadata_path:?}"))
-    }
-
-    pub async fn write_to_file(&self, metadata_path: &Path) -> Result<()> {
-        let metadata_content = serde_json::to_string(self)
-            .with_context(|| format!("serializing metadata for {metadata_path:?}"))?;
-        async_fs::write(metadata_path, metadata_content.as_bytes())
-            .await
-            .with_context(|| format!("writing metadata file at {metadata_path:?}"))?;
-        Ok(())
-    }
-}
 
 pub fn download_server_binary(
     executor: &BackgroundExecutor,
@@ -54,14 +24,20 @@ pub fn download_server_binary(
     destination_path: &Path,
     asset_kind: AssetKind,
 ) -> Task<Result<()>> {
-    spawn_download(
-        executor,
-        http_client,
-        url,
-        digest,
-        destination_path,
-        DownloadedAsset::Archive(asset_kind),
-    )
+    let url = url.to_owned();
+    let digest = digest.map(ToOwned::to_owned);
+    let destination_path = destination_path.to_owned();
+    let http = shared_http_client(http_client);
+    executor.spawn(async move {
+        aa_github_releases::download_server_binary(
+            http,
+            &url,
+            digest.as_deref(),
+            &destination_path,
+            asset_kind,
+        )
+        .await
+    })
 }
 
 pub fn download_server_raw_binary(
@@ -72,276 +48,25 @@ pub fn download_server_raw_binary(
     destination_path: &Path,
     binary_file_name: &str,
 ) -> Task<Result<()>> {
-    spawn_download(
-        executor,
-        http_client,
-        url,
-        digest,
-        destination_path,
-        DownloadedAsset::RawBinary(binary_file_name.to_owned()),
-    )
-}
-
-enum DownloadedAsset {
-    Archive(AssetKind),
-    RawBinary(String),
-}
-
-fn spawn_download(
-    executor: &BackgroundExecutor,
-    http_client: Arc<dyn HttpClient>,
-    url: &str,
-    digest: Option<&str>,
-    destination_path: &Path,
-    downloaded_asset: DownloadedAsset,
-) -> Task<Result<()>> {
     let url = url.to_owned();
     let digest = digest.map(ToOwned::to_owned);
     let destination_path = destination_path.to_owned();
+    let binary_file_name = binary_file_name.to_owned();
+    let http = shared_http_client(http_client);
     executor.spawn(async move {
-        download_server_asset(
-            &*http_client,
+        aa_github_releases::download_server_raw_binary(
+            http,
             &url,
             digest.as_deref(),
             &destination_path,
-            downloaded_asset,
+            &binary_file_name,
         )
         .await
     })
 }
 
-async fn download_server_asset(
-    http_client: &dyn HttpClient,
-    url: &str,
-    digest: Option<&str>,
-    destination_path: &Path,
-    downloaded_asset: DownloadedAsset,
-) -> Result<()> {
-    log::info!("downloading {url} into {destination_path:?}");
-    let mut response = http_client
-        .get(url, Default::default(), true)
-        .await
-        .with_context(|| format!("downloading release from {url}"))?;
-    anyhow::ensure!(
-        response.status().is_success(),
-        "downloading {url} failed with status {status}",
-        status = response.status()
-    );
-
-    let destination_parent = destination_path
-        .parent()
-        .with_context(|| format!("destination path has no parent: {destination_path:?}"))?;
-    let staging_directory = tempfile::Builder::new()
-        .prefix(".tmp-github-download-")
-        .tempdir_in(destination_parent)
-        .with_context(|| format!("creating staging directory in {destination_parent:?}"))?;
-    let staged_path = staging_directory.path().join("download");
-
-    match downloaded_asset {
-        DownloadedAsset::Archive(asset_kind) => {
-            download_and_extract(
-                response.body_mut(),
-                digest,
-                url,
-                staging_directory.path(),
-                &staged_path,
-                asset_kind,
-            )
-            .await?
-        }
-        DownloadedAsset::RawBinary(binary_file_name) => {
-            async_fs::create_dir(&staged_path)
-                .await
-                .with_context(|| format!("creating directory {staged_path:?}"))?;
-            let binary_path = staged_path.join(binary_file_name);
-            let mut binary_file = async_fs::File::create(&binary_path)
-                .await
-                .with_context(|| format!("creating a file {binary_path:?} for {url}"))?;
-            download_to_writer(response.body_mut(), &mut binary_file, digest, url).await?;
-            aa_util_gpui::fs::make_file_executable(&binary_path)
-                .await
-                .with_context(|| format!("marking {binary_path:?} as executable"))?;
-        }
-    }
-
-    // `remove_dir_all` removes a symlink itself without following it, including dangling ones.
-    if async_fs::symlink_metadata(destination_path)
-        .await
-        .is_ok_and(|metadata| metadata.is_dir() || metadata.is_symlink())
-    {
-        async_fs::remove_dir_all(destination_path)
-            .await
-            .with_context(|| format!("removing existing {destination_path:?}"))?;
-    }
-    async_fs::rename(&staged_path, destination_path)
-        .await
-        .with_context(|| format!("renaming {staged_path:?} to {destination_path:?}"))
-}
-
-async fn download_and_extract(
-    body: impl AsyncRead + Unpin,
-    digest: Option<&str>,
-    url: &str,
-    staging_directory: &Path,
-    staged_path: &Path,
-    asset_kind: AssetKind,
-) -> Result<()> {
-    // Buffer on the destination's volume rather than a possibly RAM-backed system temp dir.
-    let mut asset_file =
-        async_fs::File::from(tempfile::tempfile_in(staging_directory).with_context(|| {
-            format!("creating a temporary file for {url} in {staging_directory:?}")
-        })?);
-    download_to_writer(body, &mut asset_file, digest, url).await?;
-    asset_file
-        .seek(std::io::SeekFrom::Start(0))
-        .await
-        .with_context(|| format!("seeking to the start of the temporary file for {url}"))?;
-
-    if asset_kind != AssetKind::Gz {
-        async_fs::create_dir(staged_path)
-            .await
-            .with_context(|| format!("creating directory {staged_path:?}"))?;
-    }
-    stream_file_archive(asset_file, url, staged_path, asset_kind)
-        .await
-        .with_context(|| format!("extracting {url} into {staged_path:?}"))
-}
-
-async fn download_to_writer(
-    body: impl AsyncRead + Unpin,
-    writer: &mut (impl AsyncWrite + Unpin),
-    digest: Option<&str>,
-    url: &str,
-) -> Result<()> {
-    let mut writer = HashingWriter {
-        writer,
-        hasher: Sha256::new(),
-    };
-    futures::io::copy(&mut BufReader::new(body), &mut writer)
-        .await
-        .with_context(|| format!("saving downloaded contents from {url}"))?;
-
-    if let Some(expected_sha_256) = digest {
-        let asset_sha_256 = format!("{:x}", writer.hasher.finalize());
-        anyhow::ensure!(
-            sha256_matches(&asset_sha_256, expected_sha_256),
-            "{url} asset got SHA-256 mismatch. Expected: {expected_sha_256}, Got: {asset_sha_256}",
-        );
-    }
-
-    Ok(())
-}
-
-async fn stream_file_archive(
-    file_archive: async_fs::File,
-    url: &str,
-    destination_path: &Path,
-    asset_kind: AssetKind,
-) -> Result<()> {
-    match asset_kind {
-        AssetKind::TarGz => extract_tar_gz(destination_path, url, file_archive).await?,
-        AssetKind::TarBz2 => extract_tar_bz2(destination_path, url, file_archive).await?,
-        AssetKind::Gz => extract_gz(destination_path, url, file_archive).await?,
-        #[cfg(not(windows))]
-        AssetKind::Zip => {
-            aa_util_gpui::archive::extract_seekable_zip(destination_path, file_archive).await?;
-        }
-        #[cfg(windows)]
-        AssetKind::Zip => {
-            aa_util_gpui::archive::extract_zip(destination_path, file_archive).await?;
-        }
-    };
-    Ok(())
-}
-
-async fn extract_tar_gz(
-    destination_path: &Path,
-    url: &str,
-    from: impl AsyncRead + Unpin,
-) -> Result<(), anyhow::Error> {
-    let decompressed_bytes = GzipDecoder::new(BufReader::new(from));
-    unpack_tar_archive(destination_path, url, decompressed_bytes).await?;
-    Ok(())
-}
-
-async fn extract_tar_bz2(
-    destination_path: &Path,
-    url: &str,
-    from: impl AsyncRead + Unpin,
-) -> Result<(), anyhow::Error> {
-    let decompressed_bytes = BzDecoder::new(BufReader::new(from));
-    unpack_tar_archive(destination_path, url, decompressed_bytes).await?;
-    Ok(())
-}
-
-async fn unpack_tar_archive(
-    destination_path: &Path,
-    url: &str,
-    archive_bytes: impl AsyncRead + Unpin,
-) -> Result<(), anyhow::Error> {
-    // We don't need to set the modified time. It's irrelevant to downloaded
-    // archive verification, and some filesystems return errors when asked to
-    // apply it after extraction.
-    let archive = async_tar::ArchiveBuilder::new(archive_bytes)
-        .set_preserve_mtime(false)
-        .build();
-    archive
-        .unpack(&destination_path)
-        .await
-        .with_context(|| format!("extracting {url} to {destination_path:?}"))?;
-    Ok(())
-}
-
-async fn extract_gz(
-    destination_path: &Path,
-    url: &str,
-    from: impl AsyncRead + Unpin,
-) -> Result<(), anyhow::Error> {
-    let mut decompressed_bytes = GzipDecoder::new(BufReader::new(from));
-    let mut file = async_fs::File::create(&destination_path)
-        .await
-        .with_context(|| {
-            format!("creating a file {destination_path:?} for a download from {url}")
-        })?;
-    futures::io::copy(&mut decompressed_bytes, &mut file)
-        .await
-        .with_context(|| format!("extracting {url} to {destination_path:?}"))?;
-    Ok(())
-}
-
-struct HashingWriter<W: AsyncWrite + Unpin> {
-    writer: W,
-    hasher: Sha256,
-}
-
-impl<W: AsyncWrite + Unpin> AsyncWrite for HashingWriter<W> {
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &[u8],
-    ) -> Poll<std::result::Result<usize, std::io::Error>> {
-        match Pin::new(&mut self.writer).poll_write(cx, buf) {
-            Poll::Ready(Ok(n)) => {
-                self.hasher.update(&buf[..n]);
-                Poll::Ready(Ok(n))
-            }
-            other => other,
-        }
-    }
-
-    fn poll_flush(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<Result<(), std::io::Error>> {
-        Pin::new(&mut self.writer).poll_flush(cx)
-    }
-
-    fn poll_close(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<std::result::Result<(), std::io::Error>> {
-        Pin::new(&mut self.writer).poll_close(cx)
-    }
+fn shared_http_client(client: Arc<dyn HttpClient>) -> Arc<dyn aa_http_client::HttpClient> {
+    Arc::new(ZedHttpClient::new(client))
 }
 
 #[cfg(test)]
@@ -349,6 +74,7 @@ mod tests {
     use super::*;
     use futures::future::BoxFuture;
     use http_client::{AsyncBody, Response, Url, http::HeaderValue};
+    use sha2::{Digest, Sha256};
 
     struct StaticResponseClient {
         status: u16,

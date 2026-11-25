@@ -98,11 +98,17 @@ name = "aa_github_releases"
 version = "0.1.0"
 dependencies = [
  "aa_http_client",
+ "aa_util",
  "anyhow",
+ "async-compression",
+ "async-fs",
+ "async-tar",
  "futures",
  "log",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
  "url",
 ]
 
@@ -303,14 +309,23 @@ dependencies = [
 [[package]]
 name = "aa_util"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-fs",
+ "async_zip",
+ "futures",
+ "smol",
+ "tempfile",
+ "walkdir",
+]
 
 [[package]]
 name = "aa_util_gpui"
 version = "0.1.0"
 dependencies = [
+ "aa_util",
  "anyhow",
  "async-fs",
- "async_zip",
  "collections",
  "command-fds",
  "dirs",
@@ -339,7 +354,6 @@ dependencies = [
  "unicase",
  "url",
  "util_macros 0.1.0",
- "walkdir",
  "which",
 ]
 
@@ -2879,17 +2893,11 @@ name = "github_releases_gpui"
 version = "0.1.0"
 dependencies = [
  "aa_github_releases",
- "aa_util_gpui",
+ "aa_http_client",
  "anyhow",
- "async-compression",
- "async-fs",
- "async-tar",
  "futures",
  "gpui",
  "http_client 0.1.0",
- "log",
- "serde",
- "serde_json",
  "sha2 0.10.9",
  "tempfile",
 ]

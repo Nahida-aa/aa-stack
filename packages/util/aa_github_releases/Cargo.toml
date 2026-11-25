@@ -10,11 +10,17 @@ doctest = false
 
 [dependencies]
 aa_http_client = { path = "../aa_http_client" }
+aa_util = { path = "../aa_util" }
 anyhow.workspace = true
+async-compression.workspace = true
+async-fs.workspace = true
+async-tar.workspace = true
 futures.workspace = true
 log.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
 url.workspace = true
 
 [lints]

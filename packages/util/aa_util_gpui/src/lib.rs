@@ -4,7 +4,7 @@
 extern crate self as util;
 
 #[cfg(not(target_family = "wasm"))]
-pub mod archive;
+pub use aa_util::archive;
 #[cfg(not(target_family = "wasm"))]
 pub mod command;
 #[cfg(not(target_family = "wasm"))]
