@@ -1,0 +1,23 @@
+[package]
+name = "aa_http_client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# 门面 crate：接口在 `http_client`（zed 同名 crate 的移植），reqwest 实现在
+# `aa_reqwest_client`。provider 只依赖这里，测试时用 `test-support` 换假客户端。
+[dependencies]
+aa_reqwest_client = { path = "../aa_reqwest_client" }
+futures.workspace = true
+http_client = { path = "../http_client" }
+
+[features]
+test-support = ["http_client/test-support"]
+
+[dev-dependencies]
+# 单元测试固定打开假客户端，避免 `cargo test` 默认跳过该用例。
+http_client = { path = "../http_client", features = ["test-support"] }
+
+[lints]
+workspace = true

@@ -1,0 +1,23 @@
+[package]
+name = "aa_reqwest_client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# 与 zed 的 `crates/reqwest_client` 对应：接口在 `http_client`，这里只做
+# `http_client::HttpClient` 的 reqwest 实现（含 `AsyncBody` ↔ reqwest::Body 转换）。
+[dependencies]
+anyhow.workspace = true
+bytes.workspace = true
+futures.workspace = true
+http_client = { path = "../http_client" }
+reqwest.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+futures.workspace = true
+
+[lints]
+workspace = true

@@ -5,7 +5,7 @@ members = [
     "packages/setting/aa_settings_core", "packages/theme/aa_syntax_theme_gpui", "packages/theme/aa_syntax_theme_iced", "packages/theme/aa_theme_core", "packages/theme/aa_theme_gpui", "packages/theme/aa_theme_iced", "packages/ui/icons", "packages/ui/aa_ui_zed",
     "packages/util/aa_shared_string"
 , "packages/assets/aa_assets_core", "packages/assets/aa_assets_gpui", "packages/assets/aa_assets_iced"
-, "packages/ai/aa_cloud_llm_client", "packages/ai/aa_language_model_core", "packages/util/http_client", "packages/util/util_macros", "packages/util/aa_util_gpui", "packages/ai/aa_language_model_gpui", "packages/util/env_var", "packages/ai/web_search_gpui", "packages/apps/aa-bundle", "packages/apps/aa-install", "packages/ui/aa_ui_core", "packages/ui/aa_ui_iced", "packages/util/aa_github_releases", "packages/util/github_releases_gpui"]
+, "packages/ai/aa_cloud_llm_client", "packages/ai/aa_language_model_core", "packages/util/http_client", "packages/util/util_macros", "packages/util/aa_util_gpui", "packages/ai/aa_language_model_gpui", "packages/util/env_var", "packages/ai/web_search_gpui", "packages/apps/aa-bundle", "packages/apps/aa-install", "packages/ui/aa_ui_core", "packages/ui/aa_ui_iced", "packages/util/aa_http_client", "packages/util/aa_reqwest_client", "packages/util/aa_github_releases", "packages/util/github_releases_gpui"]
 
 [workspace.package]
 version = "0.1.0"
@@ -117,6 +117,9 @@ quote = "1"
 rand = "0.9"
 regex = "1"
 
+# 共享 HTTP 传输（packages/util/aa_http_client）。用系统信任库，企业/本地代理
+# （mitmproxy 等）的 CA 通常装在系统库里；与 aa-ai 的 reqwest 配置保持一致。
+reqwest = { version = "0.12", default-features = false, features = ["http2", "rustls-tls-native-roots", "stream"] }
 refineable = { git = "https://github.com/zed-industries/zed", rev = "c0199504b9cce79bc27524950022ed701bc3ebd5" }
 rust-embed = { version = "8.11", features = ["include-exclude", "compression"] }
 schemars = { version = "1.0", default-features = false, features = ["std", "indexmap2"] }
@@ -137,6 +140,9 @@ strum = { version = "0.28", features = ["derive"] }
 syn = { version = "2", features = ["full"] }
 tempfile = "3"
 take-until = "0.2.0"
+# aa_reqwest_client 需要在没有 tokio 上下文时自建运行时（对齐 Zed 的
+# `reqwest_client::runtime`）。
+tokio = { version = "1", features = ["rt-multi-thread", "time", "net"] }
 # aa-bundle 的 bundle 元数据（bundle.toml）解析。
 toml = "0.8"
 
