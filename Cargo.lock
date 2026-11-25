@@ -90,6 +90,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "aa_github_releases"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures",
+ "http_client 0.1.0",
+ "log",
+ "serde",
+ "serde_json",
+ "url",
+]
+
+[[package]]
 name = "aa_icons"
 version = "0.1.0"
 dependencies = [
@@ -2803,6 +2816,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e629b9b98ef3dd8afe6ca2bd0f89306cec16d43d907889945bc5d6687f2f13c7"
 
 [[package]]
+name = "github_releases_gpui"
+version = "0.1.0"
+dependencies = [
+ "aa_github_releases",
+ "aa_util_gpui",
+ "anyhow",
+ "async-compression",
+ "async-fs",
+ "async-tar",
+ "futures",
+ "gpui",
+ "http_client 0.1.0",
+ "log",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+]
+
+[[package]]
 name = "gl_generator"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3432,11 +3465,7 @@ dependencies = [
 name = "http_client"
 version = "0.1.0"
 dependencies = [
- "aa_util_gpui",
  "anyhow",
- "async-compression",
- "async-fs",
- "async-tar",
  "bytes",
  "derive_more",
  "futures",
@@ -3447,8 +3476,6 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_urlencoded",
- "sha2 0.10.9",
- "tempfile",
  "url",
 ]
 
@@ -4243,7 +4270,7 @@ dependencies = [
  "bitflags 2.13.2",
  "libc",
  "plain",
- "redox_syscall 0.9.5",
+ "redox_syscall 0.9.4",
 ]
 
 [[package]]
@@ -6268,9 +6295,9 @@ dependencies = [
 
 [[package]]
 name = "redox_syscall"
-version = "0.9.5"
+version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "580c875845b41ecb1564ad1ae4703044cef774145e3d7a94dc2b3fa7c97868fd"
+checksum = "737970939a87c6fa31e7acad13307bccbb017a073b695b6089a2c484f929e20e"
 dependencies = [
  "bitflags 2.13.2",
 ]
