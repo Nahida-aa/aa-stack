@@ -6,7 +6,10 @@
 mod download;
 mod releases;
 
-pub use download::{GithubBinaryMetadata, download_server_binary, download_server_raw_binary};
+pub use download::{
+    DownloadOptions, GithubBinaryMetadata, download_server_binary, download_server_binary_with,
+    download_server_raw_binary, download_server_raw_binary_with,
+};
 pub use releases::{
     AssetKind, GitHubLspBinaryVersion, GithubRelease, GithubReleaseAsset, build_asset_url,
     get_release_by_tag_name, latest_github_release,

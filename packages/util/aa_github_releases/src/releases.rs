@@ -54,19 +54,41 @@ pub async fn latest_github_release(
 ) -> anyhow::Result<GithubRelease> {
     let url = format!("{GITHUB_API_URL}/repos/{repo_name_with_owner}/releases");
 
-    let request = github_api_request(&url)?;
+    let releases = fetch_releases(&url, http).await?;
+
+    releases
+        .into_iter()
+        .filter(|release| !require_assets || !release.assets.is_empty())
+        .find(|release| release.pre_release == pre_release)
+        .context("finding a prerelease")
+}
+
+/// 列出仓库的 release（GitHub 默认按发布时间倒序；这里取前 100 条）。
+pub async fn list_releases(
+    repo_name_with_owner: &str,
+    http: Arc<dyn HttpClient>,
+) -> anyhow::Result<Vec<GithubRelease>> {
+    let url = format!("{GITHUB_API_URL}/repos/{repo_name_with_owner}/releases?per_page=100");
+    fetch_releases(&url, http).await
+}
+
+async fn fetch_releases(
+    url: &str,
+    http: Arc<dyn HttpClient>,
+) -> anyhow::Result<Vec<GithubRelease>> {
+    let request = github_api_request(url)?;
 
     let mut response = http
         .send(request)
         .await
-        .context("error fetching latest release")?;
+        .context("error fetching releases")?;
 
     let mut body = Vec::new();
     response
         .body_mut()
         .read_to_end(&mut body)
         .await
-        .context("error reading latest release")?;
+        .context("error reading releases")?;
 
     if response.status().is_client_error() {
         let text = String::from_utf8_lossy(body.as_slice());
@@ -76,24 +98,17 @@ pub async fn latest_github_release(
         );
     }
 
-    let releases = match serde_json::from_slice::<Vec<GithubRelease>>(body.as_slice()) {
-        Ok(releases) => releases,
-
+    match serde_json::from_slice::<Vec<GithubRelease>>(body.as_slice()) {
+        Ok(releases) => Ok(releases),
         Err(err) => {
             log::error!("Error deserializing: {err:?}");
             log::error!(
                 "GitHub API response text: {:?}",
                 String::from_utf8_lossy(body.as_slice())
             );
-            anyhow::bail!("error deserializing latest release: {err:?}");
+            anyhow::bail!("error deserializing releases: {err:?}");
         }
-    };
-
-    releases
-        .into_iter()
-        .filter(|release| !require_assets || !release.assets.is_empty())
-        .find(|release| release.pre_release == pre_release)
-        .context("finding a prerelease")
+    }
 }
 
 pub async fn get_release_by_tag_name(
@@ -182,9 +197,42 @@ pub fn build_asset_url(repo_name_with_owner: &str, tag: &str, kind: AssetKind) -
 mod tests {
     use super::{
         AssetKind, GITHUB_RELEASE_REQUEST_TIMEOUT, GithubReleaseAsset, build_asset_url,
-        github_api_request,
+        github_api_request, list_releases,
     };
-    use aa_http_client::RequestTimeout;
+    use aa_http_client::{AsyncBody, HttpClient, Request, RequestTimeout, Response};
+    use futures::{executor::block_on, future::BoxFuture};
+    use std::sync::Arc;
+
+    struct StaticResponseClient {
+        body: Vec<u8>,
+    }
+
+    impl HttpClient for StaticResponseClient {
+        fn send(
+            &self,
+            _req: Request<AsyncBody>,
+        ) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>> {
+            let body = self.body.clone();
+            Box::pin(async move { Ok(Response::new(AsyncBody::from(body))) })
+        }
+    }
+
+    #[test]
+    fn list_releases_returns_every_release() {
+        let body = br#"[
+            {"tag_name":"dub-v1.2.0","prerelease":false,"assets":[],"tarball_url":"t","zipball_url":"z"},
+            {"tag_name":"dub-v1.3.0-rc.1","prerelease":true,"assets":[],"tarball_url":"t","zipball_url":"z"}
+        ]"#
+        .to_vec();
+        let client = StaticResponseClient { body };
+
+        let releases = block_on(list_releases("owner/repo", Arc::new(client))).unwrap();
+
+        assert_eq!(releases.len(), 2);
+        assert_eq!(releases[0].tag_name, "dub-v1.2.0");
+        assert!(!releases[0].pre_release);
+        assert!(releases[1].pre_release);
+    }
 
     #[test]
     fn test_asset_digest_deserialization() {

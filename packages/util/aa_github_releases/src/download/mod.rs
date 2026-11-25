@@ -14,6 +14,8 @@ use sha2::{Digest, Sha256};
 
 use crate::AssetKind;
 
+mod resume;
+
 #[derive(serde::Deserialize, serde::Serialize, Debug)]
 pub struct GithubBinaryMetadata {
     pub metadata_version: u64,
@@ -47,12 +49,13 @@ pub async fn download_server_binary(
     destination_path: &Path,
     asset_kind: AssetKind,
 ) -> Result<()> {
-    download_server_asset(
-        &*http_client,
+    download_server_binary_with(
+        http_client,
         url,
         digest,
         destination_path,
-        DownloadedAsset::Archive(asset_kind),
+        asset_kind,
+        DownloadOptions::default(),
     )
     .await
 }
@@ -65,14 +68,85 @@ pub async fn download_server_raw_binary(
     destination_path: &Path,
     binary_file_name: &str,
 ) -> Result<()> {
-    download_server_asset(
-        &*http_client,
+    download_server_raw_binary_with(
+        http_client,
         url,
         digest,
         destination_path,
-        DownloadedAsset::RawBinary(binary_file_name.to_owned()),
+        binary_file_name,
+        DownloadOptions::default(),
     )
     .await
+}
+
+/// 下载行为选项。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DownloadOptions {
+    /// 启用跨进程断点续传：未完成的字节留在 `destination` 同目录的 `.part` 文件里，
+    /// 下次从该位置用 HTTP Range 继续。
+    pub resume: bool,
+}
+
+/// 同 [`download_server_binary`]，但可指定 [`DownloadOptions`]。
+pub async fn download_server_binary_with(
+    http_client: Arc<dyn HttpClient>,
+    url: &str,
+    digest: Option<&str>,
+    destination_path: &Path,
+    asset_kind: AssetKind,
+    options: DownloadOptions,
+) -> Result<()> {
+    let downloaded_asset = DownloadedAsset::Archive(asset_kind);
+    if options.resume {
+        resume::download_server_asset_resumable(
+            &*http_client,
+            url,
+            digest,
+            destination_path,
+            downloaded_asset,
+        )
+        .await
+    } else {
+        download_server_asset(
+            &*http_client,
+            url,
+            digest,
+            destination_path,
+            downloaded_asset,
+        )
+        .await
+    }
+}
+
+/// 同 [`download_server_raw_binary`]，但可指定 [`DownloadOptions`]。
+pub async fn download_server_raw_binary_with(
+    http_client: Arc<dyn HttpClient>,
+    url: &str,
+    digest: Option<&str>,
+    destination_path: &Path,
+    binary_file_name: &str,
+    options: DownloadOptions,
+) -> Result<()> {
+    let downloaded_asset = DownloadedAsset::RawBinary(binary_file_name.to_owned());
+    if options.resume {
+        resume::download_server_asset_resumable(
+            &*http_client,
+            url,
+            digest,
+            destination_path,
+            downloaded_asset,
+        )
+        .await
+    } else {
+        download_server_asset(
+            &*http_client,
+            url,
+            digest,
+            destination_path,
+            downloaded_asset,
+        )
+        .await
+    }
 }
 
 enum DownloadedAsset {
@@ -138,6 +212,10 @@ async fn download_server_asset(
         }
     }
 
+    replace_destination(&staged_path, destination_path).await
+}
+
+async fn replace_destination(staged_path: &Path, destination_path: &Path) -> Result<()> {
     // `remove_dir_all` removes a symlink itself without following it, including dangling ones.
     if async_fs::symlink_metadata(destination_path)
         .await
@@ -147,7 +225,7 @@ async fn download_server_asset(
             .await
             .with_context(|| format!("removing existing {destination_path:?}"))?;
     }
-    async_fs::rename(&staged_path, destination_path)
+    async_fs::rename(staged_path, destination_path)
         .await
         .with_context(|| format!("renaming {staged_path:?} to {destination_path:?}"))
 }
@@ -347,6 +425,20 @@ mod tests {
         }
     }
 
+    pub(super) fn sample_zip_archive() -> Vec<u8> {
+        vec![
+            0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x21, 0x00,
+            0x86, 0xa6, 0x10, 0x36, 0x05, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x05, 0x00,
+            0x00, 0x00, 0x61, 0x67, 0x65, 0x6e, 0x74, 0x68, 0x65, 0x6c, 0x6c, 0x6f, 0x50, 0x4b,
+            0x01, 0x02, 0x14, 0x03, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x21, 0x00,
+            0x86, 0xa6, 0x10, 0x36, 0x05, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x05, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x01, 0x00, 0x00,
+            0x00, 0x00, 0x61, 0x67, 0x65, 0x6e, 0x74, 0x50, 0x4b, 0x05, 0x06, 0x00, 0x00, 0x00,
+            0x00, 0x01, 0x00, 0x01, 0x00, 0x33, 0x00, 0x00, 0x00, 0x28, 0x00, 0x00, 0x00, 0x00,
+            0x00,
+        ]
+    }
+
     #[test]
     fn downloads_raw_binary_with_uppercase_digest_into_destination_dir() {
         let temp_dir = tempfile::tempdir().unwrap();
@@ -436,17 +528,7 @@ mod tests {
 
     #[test]
     fn downloads_archive_with_uppercase_digest_and_extracts_contents() {
-        let archive = vec![
-            0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x21, 0x00,
-            0x86, 0xa6, 0x10, 0x36, 0x05, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x05, 0x00,
-            0x00, 0x00, 0x61, 0x67, 0x65, 0x6e, 0x74, 0x68, 0x65, 0x6c, 0x6c, 0x6f, 0x50, 0x4b,
-            0x01, 0x02, 0x14, 0x03, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x21, 0x00,
-            0x86, 0xa6, 0x10, 0x36, 0x05, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x05, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x01, 0x00, 0x00,
-            0x00, 0x00, 0x61, 0x67, 0x65, 0x6e, 0x74, 0x50, 0x4b, 0x05, 0x06, 0x00, 0x00, 0x00,
-            0x00, 0x01, 0x00, 0x01, 0x00, 0x33, 0x00, 0x00, 0x00, 0x28, 0x00, 0x00, 0x00, 0x00,
-            0x00,
-        ];
+        let archive = sample_zip_archive();
         let expected_sha_256 = format!("{:X}", Sha256::digest(&archive));
         let client = StaticResponseClient {
             status: 200,
