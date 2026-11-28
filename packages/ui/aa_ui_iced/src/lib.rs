@@ -14,4 +14,6 @@ pub mod components;
 
 pub use components::ai::{AgentThreadStatus, ThreadItem};
 pub use components::context_menu::{ContextMenu, ContextMenuEntry};
-pub use components::title_bar::{TitleBar, WindowControl, platform_title_bar_height};
+pub use components::title_bar::{
+    TitleBar, WindowButtonLayout, WindowControl, platform_title_bar_height,
+};

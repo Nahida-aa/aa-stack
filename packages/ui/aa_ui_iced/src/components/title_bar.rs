@@ -21,12 +21,16 @@
 //! - **圆角与 CSD 边框**（zed：`CLIENT_SIDE_DECORATION_ROUNDING` 10px + 1px 边框，
 //!   配合透明窗口）。iced 要圆角就得开 `transparent`，那要求合成器；裸 X11（无合成
 //!   器）下会变成黑角，所以先不做。
-//! - **按窗口管理器布局摆按钮**（zed：`cx.button_layout()`，Ubuntu 上关闭键在左）。
-//!   iced 没有读 WM 布局的接口，统一摆右边（GNOME/Adwaita 的默认）。
+//! - **按窗口管理器布局摆按钮**：已搬一半 —— [`WindowButtonLayout::parse`] 与
+//!   上游 `WindowButtonLayout::parse` 同一套 GNOME 语法，[`WindowButtonLayout::read_from_system`]
+//!   启动时读一次 KDE 的 `kwinrc` / GNOME 的 gsetting（iced/winit 没有上游那条
+//!   xdg-desktop-portal 管道）。**没搬的是实时变化订阅**（上游改系统设置立刻
+//!   跟着变，iced 侧要重启应用）。
 //! - **最大化/还原图标切换**（zed 的 `Restore` 变体）：要 `window::is_maximized`
 //!   异步查一次、再订阅变化，先不做，固定画最大化图标。
 //! - 系统窗口标签页（`system_window_tabs.rs`）、Mac 红绿灯（`TRAFFIC_LIGHT_PADDING`）、
 //!   双击标题栏最大化（zed 只有 Mac 与 Linux 有，iced 侧等真有需求再说）。
+//! - 按 `WindowControls` 能力过滤（上游对 minimize/maximize 还要看窗口支持）。
 
 use aa_theme_iced::Theme as AppTheme;
 use iced::widget::svg;
@@ -99,6 +103,159 @@ impl WindowControl {
     }
 }
 
+/// 每侧最多放几个窗口按钮（上游 `gpui::MAX_BUTTONS_PER_SIDE` 同值）。
+pub const MAX_BUTTONS_PER_SIDE: usize = 3;
+
+/// 窗口按钮的布局：左/右各一组。与上游 `gpui::WindowButtonLayout` 同构
+/// （那边枚举叫 `WindowButton`，这里复用 [`WindowControl`]）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WindowButtonLayout {
+    /// 标题栏左侧的按钮（按显示顺序）。
+    pub left: [Option<WindowControl>; MAX_BUTTONS_PER_SIDE],
+    /// 标题栏右侧的按钮（按显示顺序）。
+    pub right: [Option<WindowControl>; MAX_BUTTONS_PER_SIDE],
+}
+
+impl WindowButtonLayout {
+    /// Zed 的 Linux 兜底布局：全部在右，顺序为最小化、最大化、关闭
+    /// （上游 `WindowButtonLayout::linux_default`）。
+    pub fn linux_default() -> Self {
+        Self {
+            left: [None; MAX_BUTTONS_PER_SIDE],
+            right: [
+                Some(WindowControl::Minimize),
+                Some(WindowControl::Maximize),
+                Some(WindowControl::Close),
+            ],
+        }
+    }
+
+    /// 解析 GNOME 语法的 `button-layout` 字符串（如 `"close,minimize:maximize"`，
+    /// 冒号左侧是标题栏左边、右侧是右边；只认三个键名，未识别的忽略；同一键
+    /// 重复只收第一次；每侧最多 [`MAX_BUTTONS_PER_SIDE`] 个）。与上游
+    /// `gpui::WindowButtonLayout::parse` 同一套规则。
+    pub fn parse(layout_string: &str) -> Result<Self, String> {
+        fn parse_side(
+            side: &str,
+            seen: &mut [bool; MAX_BUTTONS_PER_SIDE],
+        ) -> [Option<WindowControl>; MAX_BUTTONS_PER_SIDE] {
+            let mut result = [None; MAX_BUTTONS_PER_SIDE];
+            let mut slot = 0;
+            for name in side.split(',') {
+                let name = name.trim();
+                let button = match name {
+                    "minimize" => WindowControl::Minimize,
+                    "maximize" => WindowControl::Maximize,
+                    "close" => WindowControl::Close,
+                    _ => continue,
+                };
+                if seen[button as usize] {
+                    continue;
+                }
+                if let Some(cell) = result.get_mut(slot) {
+                    *cell = Some(button);
+                    seen[button as usize] = true;
+                    slot += 1;
+                }
+            }
+            result
+        }
+
+        let (left, right) = layout_string.split_once(':').unwrap_or(("", layout_string));
+        let mut seen = [false; MAX_BUTTONS_PER_SIDE];
+        let layout = Self {
+            left: parse_side(left, &mut seen),
+            right: parse_side(right, &mut seen),
+        };
+        if layout.left.iter().all(Option::is_none) && layout.right.iter().all(Option::is_none) {
+            return Err(format!("button layout {layout_string:?} 没有可识别的按钮"));
+        }
+        Ok(layout)
+    }
+
+    /// KDE（KWin）的按钮字母码 → 窗口控制：`I`=最小化、`A`=最大化、`X`=关闭，
+    /// 其余（菜单 `M`、帮助 `H`……）不是这三键，忽略。最多收前三个。
+    fn parse_kde_buttons(value: &str) -> [Option<WindowControl>; MAX_BUTTONS_PER_SIDE] {
+        let mut result = [None; MAX_BUTTONS_PER_SIDE];
+        let mut slot = 0;
+        for letter in value.trim().trim_matches('"').chars() {
+            let button = match letter {
+                'I' => WindowControl::Minimize,
+                'A' => WindowControl::Maximize,
+                'X' => WindowControl::Close,
+                _ => continue,
+            };
+            if let Some(cell) = result.get_mut(slot) {
+                *cell = Some(button);
+                slot += 1;
+            }
+            if slot == MAX_BUTTONS_PER_SIDE {
+                break;
+            }
+        }
+        result
+    }
+
+    /// 读一次系统的窗口按钮布局。
+    ///
+    /// 上游走 xdg-desktop-portal 读 GNOME 的 gsetting 并订阅变化；iced 侧没有
+    /// 这条管道，只能启动时读一次桌面配置，改系统布局后要重启应用：
+    ///
+    /// 1. KDE（KWin）：`~/.config/kwinrc` 的 `[org.kde.kdecoration2]`
+    ///    `ButtonsOnLeft` / `ButtonsOnRight`（字母码见 [`Self::parse_kde_buttons`]）；
+    /// 2. GNOME 及对齐 gsettings 的桌面：`org.gnome.desktop.wm.preferences`
+    ///    `button-layout`，走 `gsettings` 命令行（GNOME 语法，见 [`Self::parse`]）；
+    /// 3. 都读不到 → [`Self::linux_default`]（全在右）。
+    pub fn read_from_system() -> Self {
+        if let Some(layout) = Self::read_kwin_layout() {
+            return layout;
+        }
+        if let Some(layout) = Self::read_gnome_layout() {
+            return layout;
+        }
+        Self::linux_default()
+    }
+
+    /// 读 `~/.config/kwinrc`。组与两个键都在才算读到（KDE 未自定义按钮时
+    /// 通常没有这个组，落到下一个来源 —— 其默认布局恰与 `linux_default` 一致）。
+    fn read_kwin_layout() -> Option<Self> {
+        let home = std::env::var("HOME").ok()?;
+        let content = std::fs::read_to_string(format!("{home}/.config/kwinrc")).ok()?;
+        // 最小 INI 解析：只认 [org.kde.kdecoration2] 组里的两个键。
+        let mut section = String::new();
+        let mut left = None;
+        let mut right = None;
+        for line in content.lines() {
+            let line = line.trim();
+            if line.starts_with('[') && line.ends_with(']') {
+                section = line[1..line.len() - 1].to_owned();
+            } else if section == "org.kde.kdecoration2" {
+                if let Some(value) = line.strip_prefix("ButtonsOnLeft=") {
+                    left = Some(Self::parse_kde_buttons(value));
+                }
+                if let Some(value) = line.strip_prefix("ButtonsOnRight=") {
+                    right = Some(Self::parse_kde_buttons(value));
+                }
+            }
+        }
+        Some(Self {
+            left: left?,
+            right: right?,
+        })
+    }
+
+    /// 读 GNOME 侧的 gsetting（走 `gsettings` 命令行，一次子进程开销）。
+    fn read_gnome_layout() -> Option<Self> {
+        let output = std::process::Command::new("gsettings")
+            .args(["get", "org.gnome.desktop.wm.preferences", "button-layout"])
+            .output()
+            .ok()?;
+        let layout = String::from_utf8(output.stdout).ok()?;
+        let layout = layout.trim().trim_matches('\'').trim_matches('"');
+        Self::parse(layout).ok()
+    }
+}
+
 /// 标题栏（窗口框架）。
 ///
 /// 用法：宿主填两端的插槽，把「按下整条 = 拖窗口」与三个窗口按钮的消息接上，
@@ -121,6 +278,7 @@ pub struct TitleBar<'a, Message> {
     text_size: f32,
     height: Option<f32>,
     window_controls: bool,
+    button_layout: Option<WindowButtonLayout>,
     left: Vec<Element<'a, Message>>,
     right: Vec<Element<'a, Message>>,
     on_drag: Option<Message>,
@@ -136,6 +294,7 @@ impl<'a, Message> TitleBar<'a, Message> {
             text_size: 16.0,
             height: None,
             window_controls: false,
+            button_layout: None,
             left: Vec::new(),
             right: Vec::new(),
             on_drag: None,
@@ -168,6 +327,17 @@ impl<'a, Message> TitleBar<'a, Message> {
     /// 画不画最小化/最大化/关闭（只有 CSD 才该画，见模块头）。
     pub fn window_controls(mut self, window_controls: bool) -> Self {
         self.window_controls = window_controls;
+        self
+    }
+
+    /// 窗口按钮的布局（左/右各一组）。
+    ///
+    /// 不给则用 [`WindowButtonLayout::linux_default`]（全在右）。宿主可用
+    /// [`WindowButtonLayout::read_from_system`] 跟随系统设置 —— 上游是 gpui
+    /// 平台层读的（xdg-desktop-portal，带实时变化订阅），iced 侧由宿主显式
+    /// 递进来，且只在启动时读一次。
+    pub fn button_layout(mut self, layout: WindowButtonLayout) -> Self {
+        self.button_layout = Some(layout);
         self
     }
 
@@ -223,26 +393,31 @@ impl<'a, Message> TitleBar<'a, Message> {
                 left: TITLE_BAR_LEFT_PADDING,
             });
 
-        content = content.extend(self.left);
-        content = content.push(space::horizontal());
-        content = content.extend(self.right);
+        // 按钮组：组内间距与两侧内边距照 zed `LinuxWindowControls` 的
+        // `gap_3()`/`px_3()`。左组在全部内容之前、右组在最后 —— 与上游
+        // render 的左右摆位一致；某侧没配按钮就不画（`controls_group` 返回
+        // None），用户把三键都挪去左边时右侧就是空的。
+        let layout = self
+            .button_layout
+            .unwrap_or_else(WindowButtonLayout::linux_default);
 
-        if self.window_controls
-            && let Some(map) = self.on_window_control
-        {
-            // 按钮组：组内间距与两侧内边距照 zed `LinuxWindowControls` 的
-            // `gap_3()`/`px_3()`，整组贴在条的最右端。
-            let mut controls = iced::widget::Row::new()
-                .spacing(CAPTION_GROUP_SPACING)
-                .padding([0.0, CAPTION_GROUP_PADDING]);
-            for control in [
-                WindowControl::Minimize,
-                WindowControl::Maximize,
-                WindowControl::Close,
-            ] {
-                controls = controls.push(caption_button(self.theme, control, &*map));
+        match (self.window_controls, self.on_window_control.as_deref()) {
+            (true, Some(map)) => {
+                if let Some(left) = controls_group(self.theme, &layout.left, map) {
+                    content = content.push(left);
+                }
+                content = content.extend(self.left);
+                content = content.push(space::horizontal());
+                content = content.extend(self.right);
+                if let Some(right) = controls_group(self.theme, &layout.right, map) {
+                    content = content.push(right);
+                }
             }
-            content = content.push(controls);
+            _ => {
+                content = content.extend(self.left);
+                content = content.push(space::horizontal());
+                content = content.extend(self.right);
+            }
         }
 
         let bar = container(content)
@@ -260,6 +435,26 @@ impl<'a, Message> TitleBar<'a, Message> {
             None => bar.into(),
         }
     }
+}
+
+/// 一侧的窗口按钮组；一侧一个按钮都没配就整个不画。
+///
+/// 按钮按 [`WindowButtonLayout`] 里给的顺序排，组内间距/内边距照 zed
+/// `LinuxWindowControls` 的 `gap_3()`/`px_3()`。
+fn controls_group<'a, Message: Clone + 'a>(
+    theme: &'a AppTheme,
+    buttons: &[Option<WindowControl>; MAX_BUTTONS_PER_SIDE],
+    map: &dyn Fn(WindowControl) -> Message,
+) -> Option<Element<'a, Message>> {
+    let mut group = Row::new()
+        .spacing(CAPTION_GROUP_SPACING)
+        .padding([0.0, CAPTION_GROUP_PADDING]);
+    let mut any = false;
+    for button in buttons.iter().flatten() {
+        any = true;
+        group = group.push(caption_button(theme, *button, map));
+    }
+    any.then(|| group.into())
 }
 
 /// 一个窗口按钮。
@@ -425,5 +620,102 @@ mod tests {
             ui.find(WindowControl::Close.id()).is_err(),
             "没接消息就不画按钮（画了也点不动）"
         );
+    }
+
+    /// GNOME 语法的 button-layout：冒号分左右、未识别的名字忽略、重复只收
+    /// 第一次、每侧最多三个 —— 与上游 `WindowButtonLayout::parse` 同一套规则。
+    #[test]
+    fn the_button_layout_parses_the_gnome_grammar() {
+        let layout = WindowButtonLayout::parse("close,minimize:maximize").unwrap();
+        assert_eq!(
+            layout.left,
+            [
+                Some(WindowControl::Close),
+                Some(WindowControl::Minimize),
+                None
+            ]
+        );
+        assert_eq!(layout.right, [Some(WindowControl::Maximize), None, None]);
+
+        // 没有冒号 = 全在右；menu/appmenu 不是三键之一，忽略。
+        let layout = WindowButtonLayout::parse("menu,maximize,minimize,close,appmenu").unwrap();
+        assert!(layout.left.iter().all(Option::is_none));
+        assert_eq!(
+            layout.right,
+            [
+                Some(WindowControl::Maximize),
+                Some(WindowControl::Minimize),
+                Some(WindowControl::Close)
+            ]
+        );
+
+        // 一个可识别的按钮都没有 → 报错（上游同款行为）。
+        assert!(WindowButtonLayout::parse("menu,appmenu").is_err());
+    }
+
+    /// KDE 的按钮字母码：`I`=最小化、`A`=最大化、`X`=关闭（用户的 kwinrc
+    /// `ButtonsOnLeft=XAI` 就是这个顺序），其余字母忽略。
+    #[test]
+    fn kde_button_letters_map_to_window_controls() {
+        assert_eq!(
+            WindowButtonLayout::parse_kde_buttons("XAI"),
+            [
+                Some(WindowControl::Close),
+                Some(WindowControl::Maximize),
+                Some(WindowControl::Minimize)
+            ]
+        );
+        // 最多三个，后面的丢掉。
+        assert_eq!(
+            WindowButtonLayout::parse_kde_buttons("XAIM"),
+            [
+                Some(WindowControl::Close),
+                Some(WindowControl::Maximize),
+                Some(WindowControl::Minimize)
+            ]
+        );
+    }
+
+    /// 布局跟随：把关闭键配到左边，按钮组就画在内容之前；右侧没配就不画。
+    #[test]
+    fn the_button_layout_can_put_the_close_button_on_the_left() {
+        let mut ui = iced_test::simulator(
+            TitleBar::new(&THEME)
+                .left(text("File"))
+                .window_controls(true)
+                .button_layout(WindowButtonLayout {
+                    left: [Some(WindowControl::Close), None, None],
+                    right: [None; MAX_BUTTONS_PER_SIDE],
+                })
+                .on_drag(Msg::Drag)
+                .on_window_control(Msg::Control)
+                .into_element(),
+        );
+        assert!(ui.find("File").is_ok(), "内容插槽照常渲染");
+        assert!(ui.find(WindowControl::Close.id()).is_ok(), "关闭键画在左侧");
+        assert!(
+            ui.find(WindowControl::Minimize.id()).is_err(),
+            "右侧没配按钮就不画"
+        );
+    }
+
+    /// 兜底布局（没递 button_layout 时）与上游 linux_default 一致：全在右。
+    #[test]
+    fn the_default_layout_puts_all_controls_on_the_right() {
+        let mut ui = iced_test::simulator(
+            TitleBar::new(&THEME)
+                .left(text("File"))
+                .window_controls(true)
+                .on_drag(Msg::Drag)
+                .on_window_control(Msg::Control)
+                .into_element(),
+        );
+        for control in [
+            WindowControl::Minimize,
+            WindowControl::Maximize,
+            WindowControl::Close,
+        ] {
+            assert!(ui.find(control.id()).is_ok(), "兜底布局 {control:?} 在右");
+        }
     }
 }
