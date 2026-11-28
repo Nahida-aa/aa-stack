@@ -12,5 +12,5 @@ pub use download::{
 };
 pub use releases::{
     AssetKind, GitHubLspBinaryVersion, GithubRelease, GithubReleaseAsset, build_asset_url,
-    get_release_by_tag_name, latest_github_release,
+    get_release_by_tag_name, latest_github_release, list_releases,
 };
