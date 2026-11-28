@@ -2,4 +2,6 @@
 
 pub mod ai;
 pub mod context_menu;
+pub mod icon;
+pub mod icon_button;
 pub mod title_bar;
