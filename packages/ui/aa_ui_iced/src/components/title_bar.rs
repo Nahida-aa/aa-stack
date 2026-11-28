@@ -30,28 +30,30 @@
 
 use aa_theme_iced::Theme as AppTheme;
 use iced::widget::svg;
-use iced::widget::{button, container, mouse_area, row, space};
-use iced::{Alignment, Background, Border, Color, Element, Fill, Length, Padding};
+use iced::widget::{Row, button, container, mouse_area, row, space};
+use iced::{Alignment, Background, Border, Element, Fill, Length, Padding};
 
 /// 标题栏的最小高度（zed `platform_title_bar_height` 的下限）。
 pub const TITLE_BAR_MIN_HEIGHT: f32 = 34.0;
 
-/// 窗口按钮的宽度（zed `WindowsCaptionButton`：`w(px(36.))`）。
-pub const CAPTION_BUTTON_WIDTH: f32 = 36.0;
+/// 窗口按钮的边长（zed `LinuxWindowControls` 的 `w_5()`/`h_5()`，20px）。
+///
+/// 上游 Linux 的窗口按钮是 20×20 的圆形悬停块，不是 Windows 版那种
+/// 36px 宽、占满标题栏高的整条 —— iced 版此前抄的是 Windows 规格，与
+/// 同机跑的 Zed/aa-zed 观感对不上，现已统一到 Linux 规格。
+pub const CAPTION_BUTTON_WIDTH: f32 = 20.0;
 
 /// 窗口按钮里图标的边长（aa-zed 侧 `svg().size_4()`，即 16px）。
 pub const CAPTION_ICON_SIZE: f32 = 16.0;
 
+/// 按钮组内的间距（zed `LinuxWindowControls` 的 `gap_3()`，12px）。
+pub const CAPTION_GROUP_SPACING: f32 = 12.0;
+
+/// 按钮组两侧的内边距（zed `LinuxWindowControls` 的 `px_3()`，12px）。
+pub const CAPTION_GROUP_PADDING: f32 = 12.0;
+
 /// 左侧内容的内边距（zed 标题栏的 `pl_2()`）。
 pub const TITLE_BAR_LEFT_PADDING: f32 = 8.0;
-
-/// 关闭键悬停时的底色（zed 直接写死的 `#E81120`，不是语义令牌）。
-const CLOSE_HOVER_BACKGROUND: Color = Color {
-    r: 232.0 / 255.0,
-    g: 17.0 / 255.0,
-    b: 32.0 / 255.0,
-    a: 1.0,
-};
 
 /// 平台标题栏高度。
 ///
@@ -228,13 +230,19 @@ impl<'a, Message> TitleBar<'a, Message> {
         if self.window_controls
             && let Some(map) = self.on_window_control
         {
+            // 按钮组：组内间距与两侧内边距照 zed `LinuxWindowControls` 的
+            // `gap_3()`/`px_3()`，整组贴在条的最右端。
+            let mut controls = iced::widget::Row::new()
+                .spacing(CAPTION_GROUP_SPACING)
+                .padding([0.0, CAPTION_GROUP_PADDING]);
             for control in [
                 WindowControl::Minimize,
                 WindowControl::Maximize,
                 WindowControl::Close,
             ] {
-                content = content.push(caption_button(self.theme, control, &*map));
+                controls = controls.push(caption_button(self.theme, control, &*map));
             }
+            content = content.push(controls);
         }
 
         let bar = container(content)
@@ -256,10 +264,12 @@ impl<'a, Message> TitleBar<'a, Message> {
 
 /// 一个窗口按钮。
 ///
-/// 样式抄 zed 的 `WindowsCaptionButton`：宽 36、占满高度、悬停 `ghost_element_hover`
-/// （关闭键例外，写死的红底白字）、按下 `ghost_element_active`。图标与 aa-zed 侧
-/// `WindowControlType::icon` 同款（`aa_icons` 内嵌的 `Generic*` SVG）；iced 的 svg
-/// `color` 过滤器保 alpha 换 RGB，SVG 里写死的笔画色会被整体替换，主题色跟得上来。
+/// 样式抄 zed 的 `LinuxWindowControls`（同机可见的那套）：20×20 的圆形悬停块
+/// （`ghost_element_hover`）、16px 图标、图标色 `icon`/悬停 `icon_muted` ——
+/// 关闭键**不做**红底白字，那是 Windows 版 `WindowsCaptionButton` 的规格，
+/// Linux 上游没有。图标与 aa-zed 侧 `WindowControlType::icon` 同款（`aa_icons`
+/// 内嵌的 `Generic*` SVG）；iced 的 svg `color` 过滤器保 alpha 换 RGB，SVG 里
+/// 写死的笔画色会被整体替换，主题色跟得上来。
 fn caption_button<'a, Message: Clone + 'a>(
     theme: &'a AppTheme,
     control: WindowControl,
@@ -267,14 +277,13 @@ fn caption_button<'a, Message: Clone + 'a>(
 ) -> Element<'a, Message> {
     let colors = theme.colors();
     // 窗口控制四枚随 aa_icons 内嵌，必然取得到。
-    let handle =
-        svg::Handle::from_memory(control.icon().svg_bytes().expect("窗口控制图标已内嵌"));
-    // 图标色跟按钮的文字色令牌走；关闭键悬停/按下是红底白字。
+    let handle = svg::Handle::from_memory(control.icon().svg_bytes().expect("窗口控制图标已内嵌"));
+    // 图标色照 zed Linux：常态 `icon`，悬停 `icon_muted`。
     let icon_color = move |hovered: bool| {
-        if hovered && control == WindowControl::Close {
-            Color::WHITE
+        if hovered {
+            colors.icon_muted
         } else {
-            colors.text
+            colors.icon
         }
     };
 
@@ -287,29 +296,23 @@ fn caption_button<'a, Message: Clone + 'a>(
             }),
     )
     .width(Length::Fixed(CAPTION_BUTTON_WIDTH))
-    .height(Fill)
+    .height(Length::Fixed(CAPTION_BUTTON_WIDTH))
     .padding(0)
     .on_press(map(control))
     .style(move |_, status| {
-        let (background, text_color) = match (control, status) {
-            (WindowControl::Close, button::Status::Hovered) => {
-                (Some(CLOSE_HOVER_BACKGROUND), Color::WHITE)
-            }
-            (WindowControl::Close, button::Status::Pressed) => (
-                Some(Color {
-                    a: 0.8,
-                    ..CLOSE_HOVER_BACKGROUND
-                }),
-                Color::WHITE,
-            ),
-            (_, button::Status::Hovered) => (Some(colors.ghost_element_hover), colors.text),
-            (_, button::Status::Pressed) => (Some(colors.ghost_element_active), colors.text),
-            _ => (None, colors.text),
+        // 悬停/按下的底色是同色圆形小块（半径取边长一半 = 圆），与上游
+        // `rounded_2xl` 在 20px 盒子上的实际观感一致。
+        let background = match status {
+            button::Status::Hovered | button::Status::Pressed => Some(colors.ghost_element_hover),
+            _ => None,
         };
         button::Style {
             background: background.map(Background::Color),
-            text_color,
-            border: Border::default(),
+            text_color: colors.text,
+            border: Border {
+                radius: (CAPTION_BUTTON_WIDTH / 2.0).into(),
+                ..Border::default()
+            },
             ..button::Style::default()
         }
     });
