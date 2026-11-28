@@ -1,337 +1,30 @@
-use std::sync::Arc;
+//! 图标名枚举 —— 变体清单由 `build.rs` 扫描 `assets/icons/` 自动生成
+//! （gpui-kit 同款做法：SVG 文件名是唯一事实源，加图标 = 放文件重编译）。
+//!
+//! strum/serde 的 derive 在生成代码里原样保留：`IntoEnumIterator`（aa_ui_zed
+//! 的图标全集展示页）、`EnumString`（资产目录反解析）、`IntoStaticStr` 都有
+//! 消费者，不能丢。序列化行为也不变（默认按变体名 PascalCase 输出）。
 
-use serde::{Deserialize, Serialize};
-use strum::{EnumIter, EnumString, IntoStaticStr};
-
-#[derive(
-    Debug, PartialEq, Eq, Copy, Clone, EnumIter, EnumString, IntoStaticStr, Serialize, Deserialize,
-)]
-#[strum(serialize_all = "snake_case")]
-pub enum IconName {
-    AcpRegistry,
-    AiAnthropic,
-    AiAnthropicCompat,
-    AiBedrock,
-    AiClaude,
-    AiDeepSeek,
-    AiEdit,
-    AiGemini,
-    AiGoogle,
-    AiLlamaCpp,
-    AiLmStudio,
-    AiMistral,
-    AiOllama,
-    AiOpenAi,
-    AiOpenAiCompat,
-    AiOpenAiGptSub,
-    AiOpenCode,
-    AiOpenRouter,
-    AiVercel,
-    AiXAi,
-    AiZed,
-    Archive,
-    ArrowCircle,
-    ArrowDown,
-    ArrowDown10,
-    ArrowDownRight,
-    ArrowLeft,
-    ArrowRight,
-    ArrowRightLeft,
-    ArrowUp,
-    ArrowUpRight,
-    AtSign,
-    Attach,
-    AudioOff,
-    AudioOn,
-    Backspace,
-    Bell,
-    BellDot,
-    BellOff,
-    BellRing,
-    Binary,
-    Bitbucket,
-    Blocks,
-    Bookmark,
-    BoltFilled,
-    BoltOutlined,
-    Book,
-    BookCopy,
-    Box,
-    BoxOpen,
-    CaseSensitive,
-    Chat,
-    Check,
-    CheckDouble,
-    ChevronDown,
-    ChevronDownUp,
-    ChevronLeft,
-    ChevronRight,
-    ChevronUp,
-    ChevronUpDown,
-    Circle,
-    CircleHelp,
-    Clock,
-    Close,
-    CloudDownload,
-    Code,
-    Codeberg,
-    Command,
-    Compact,
-    Control,
-    Copilot,
-    CopilotDisabled,
-    CopilotError,
-    CopilotInit,
-    Copy,
-    CountdownTimer,
-    Crosshair,
-    CursorIBeam,
-    Dash,
-    DatabaseZap,
-    Debug,
-    DebugBreakpoint,
-    DebugContinue,
-    DebugContinueThread,
-    DebugDetach,
-    DebugDisabledBreakpoint,
-    DebugDisabledLogBreakpoint,
-    DebugIgnoreBreakpoints,
-    DebugLogBreakpoint,
-    DebugPause,
-    DebugStepInto,
-    DebugStepOut,
-    DebugStepOver,
-    Delete,
-    Diff,
-    DiffSplit,
-    DiffSplitAuto,
-    DiffUnified,
-    Disconnected,
-    Download,
-    EditorAtom,
-    EditorCursor,
-    EditorEmacs,
-    EditorJetBrains,
-    EditorSublime,
-    EditorVsCode,
-    Ellipsis,
-    Envelope,
-    Eraser,
-    Escape,
-    Exit,
-    ExpandDown,
-    ExpandUp,
-    ExpandVertical,
-    Eye,
-    EyeOff,
-    FastForward,
-    FastForwardOff,
-    File,
-    FileCode,
-    FileCodeOff,
-    FileDiff,
-    FileDoc,
-    FileGeneric,
-    FileGit,
-    FileIgnored,
-    FileLock,
-    FileMarkdown,
-    FileMultiple,
-    FileRust,
-    FileTextFilled,
-    FileTextOutlined,
-    FileToml,
-    FileTree,
-    Filter,
-    FilterFunnel,
-    Flame,
-    FoldVertical,
-    Folder,
-    FolderAdd,
-    FolderInclude,
-    FolderOpen,
-    FolderSearch,
-    FolderShare,
-    FolderShared,
-    Font,
-    FontSize,
-    FontWeight,
-    Forgejo,
-    ForwardArrow,
-    ForwardArrowUp,
-    GenericClose,
-    GenericMaximize,
-    GenericMinimize,
-    GenericRestore,
-    Gerrit,
-    GitBranch,
-    GitBranchPlus,
-    GitCommit,
-    GitGraph,
-    GitMergeConflict,
-    GitWorktree,
-    Gitea,
-    Github,
-    Gitlab,
-    Hash,
-    HistoryRerun,
-    Image,
-    Inception,
-    Indicator,
-    Info,
-    Json,
-    Keyboard,
-    LineHeight,
-    Link,
-    Linux,
-    ListCollapse,
-    ListTodo,
-    ListTree,
-    ListX,
-    LoadCircle,
-    LocationEdit,
-    Lock,
-    LockOff,
-    MagnifyingGlass,
-    Maximize,
-    MaximizeAlt,
-    Menu,
-    Mic,
-    MicMute,
-    Minimize,
-    Notepad,
-    OnCall,
-    Option,
-    PageDown,
-    PageUp,
-    Paperclip,
-    Pencil,
-    PencilUnavailable,
-    Person,
-    Pin,
-    PlayFilled,
-    PlayOutlined,
-    Plus,
-    Power,
-    Public,
-    PullRequest,
-    QueueMessage,
-    Quote,
-    Reader,
-    RefreshTitle,
-    Regex,
-    ReplNeutral,
-    Replace,
-    ReplaceAll,
-    ReplaceNext,
-    ReplyArrowRight,
-    Rerun,
-    Return,
-    RotateCcw,
-    RotateCw,
-    Scissors,
-    Screen,
-    SelectAll,
-    Send,
-    Server,
-    Settings,
-    Share,
-    Shift,
-    SignalHigh,
-    SignalLow,
-    SignalMedium,
-    Slash,
-    Sourcehut,
-    Space,
-    Sparkle,
-    Split,
-    SplitAlt,
-    SquareDot,
-    SquareMinus,
-    SquarePlus,
-    Star,
-    StarFilled,
-    Stop,
-    Tab,
-    Table,
-    Terminal,
-    TerminalAlt,
-    TextSnippet,
-    TextWrap,
-    TextUnwrap,
-    ThinkingMode,
-    ThinkingModeOff,
-    ThisWindow,
-    Thread,
-    ThreadFromSummary,
-    ThreadsSidebarLeftClosed,
-    ThreadsSidebarLeftOpen,
-    ThreadsSidebarRightClosed,
-    ThreadsSidebarRightOpen,
-    ThumbsDown,
-    ThumbsUp,
-    TodoComplete,
-    TodoPending,
-    TodoProgress,
-    ToolCopy,
-    ToolDeleteFile,
-    ToolDiagnostics,
-    ToolHammer,
-    ToolNotification,
-    ToolPencil,
-    ToolSearch,
-    ToolTerminal,
-    ToolThink,
-    ToolWeb,
-    Trash,
-    Triangle,
-    TriangleRight,
-    Undo,
-    Unpin,
-    UserArrowUp,
-    UserCheck,
-    UserGroup,
-    UserRoundPen,
-    Warning,
-    WholeWord,
-    XCircle,
-    XCircleFilled,
-    ZedAgent,
-    ZedAgentTwo,
-    ZedAssistant,
-    ZedPredict,
-    ZedPredictDisabled,
-    ZedPredictDown,
-    ZedPredictError,
-    ZedPredictUp,
-    ZedSrcCustom,
-    ZedSrcExtension,
-}
+include!(concat!(env!("OUT_DIR"), "/icon_name.rs"));
 
 impl IconName {
-    /// Returns the path to this icon.
-    pub fn path(&self) -> Arc<str> {
-        let file_stem: &'static str = self.into();
-        format!("icons/{file_stem}.svg").into()
-    }
-
     /// 返回内嵌在本 crate 里的 SVG 字节。
     ///
-    /// gpui 侧走应用自己的 AssetSource 运行时加载（`aa_assets_core` 的 RustEmbed）；
-    /// iced 侧没有资产源可用，只能吃编译期内嵌的字节。目前只有窗口控制的四枚
-    /// 随本 crate 走（`assets/icons/`，与 gpui 侧 `WindowControlType::icon` 同款
-    /// 图形），其余枚举对应的全套 SVG 还在 gpui_learn，未内嵌的返回 `None`。
+    /// gpui 侧走应用自己的 AssetSource 运行时加载（`aa_assets_core` 的
+    /// RustEmbed 已经把整套图标嵌进去了）；iced 侧没有资产源可用，只能吃
+    /// 编译期内嵌的字节。只有窗口控制的四枚走内嵌 —— iced 侧目前也只有它们
+    /// 用得到，不把整套 298 个 SVG 再嵌一遍占二进制体积。
     pub fn svg_bytes(self) -> Option<&'static [u8]> {
         match self {
-            IconName::GenericMinimize => {
-                Some(include_bytes!("../../../../assets/icons/generic_minimize.svg"))
-            }
-            IconName::GenericMaximize => {
-                Some(include_bytes!("../../../../assets/icons/generic_maximize.svg"))
-            }
-            IconName::GenericRestore => {
-                Some(include_bytes!("../../../../assets/icons/generic_restore.svg"))
-            }
+            IconName::GenericMinimize => Some(include_bytes!(
+                "../../../../assets/icons/generic_minimize.svg"
+            )),
+            IconName::GenericMaximize => Some(include_bytes!(
+                "../../../../assets/icons/generic_maximize.svg"
+            )),
+            IconName::GenericRestore => Some(include_bytes!(
+                "../../../../assets/icons/generic_restore.svg"
+            )),
             IconName::GenericClose => {
                 Some(include_bytes!("../../../../assets/icons/generic_close.svg"))
             }
@@ -344,7 +37,7 @@ impl IconName {
 mod tests {
     use std::path::PathBuf;
 
-    use strum::ParseError;
+    use strum::{IntoEnumIterator as _, ParseError};
 
     use crate::IconName;
 
@@ -353,19 +46,11 @@ mod tests {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../assets")
     }
 
-    /// 内嵌的四枚窗口控制图标必须真的在资产目录里（`svg_bytes()` 的
-    /// `include_bytes!` 与这里引用的是同一批文件，缺一个都编不过或测不过）。
-    ///
-    /// 全套枚举对应的全量 SVG 还在 gpui_learn，搬齐之后这里才能恢复
-    /// 「`IconName::iter()` 全量存在」的断言 —— 那之前测只会整片红。
+    /// 双向保障之一：每个枚举变体都有对应的 SVG 文件（`path()` 生成的路径
+    /// 一定能命中真实文件）。
     #[test]
-    fn test_embedded_icons_exist() {
-        for icon in [
-            IconName::GenericMinimize,
-            IconName::GenericMaximize,
-            IconName::GenericRestore,
-            IconName::GenericClose,
-        ] {
+    fn test_all_icons_exist() {
+        for icon in IconName::iter() {
             let icon_path = asset_path().join(&*icon.path());
             assert!(
                 icon_path.exists(),
@@ -374,8 +59,8 @@ mod tests {
         }
     }
 
-    /// 资产目录里出现的每个 SVG 文件名都必须能解析回枚举 —— 防止放了文件
-    /// 却忘了建变体（反向保障：`path()` 生成的路径一定能命中真实文件）。
+    /// 双向保障之二：资产目录里出现的每个 SVG 文件名都能解析回枚举 ——
+    /// 防止放了文件却忘了建变体。
     #[test]
     fn test_no_dangling_icons() -> Result<(), ParseError> {
         let icons_dir = asset_path().join("icons");
