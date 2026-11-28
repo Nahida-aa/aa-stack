@@ -314,22 +314,59 @@ impl IconName {
         let file_stem: &'static str = self.into();
         format!("icons/{file_stem}.svg").into()
     }
+
+    /// 返回内嵌在本 crate 里的 SVG 字节。
+    ///
+    /// gpui 侧走应用自己的 AssetSource 运行时加载（`aa_assets_core` 的 RustEmbed）；
+    /// iced 侧没有资产源可用，只能吃编译期内嵌的字节。目前只有窗口控制的四枚
+    /// 随本 crate 走（`assets/icons/`，与 gpui 侧 `WindowControlType::icon` 同款
+    /// 图形），其余枚举对应的全套 SVG 还在 gpui_learn，未内嵌的返回 `None`。
+    pub fn svg_bytes(self) -> Option<&'static [u8]> {
+        match self {
+            IconName::GenericMinimize => {
+                Some(include_bytes!("../../../../assets/icons/generic_minimize.svg"))
+            }
+            IconName::GenericMaximize => {
+                Some(include_bytes!("../../../../assets/icons/generic_maximize.svg"))
+            }
+            IconName::GenericRestore => {
+                Some(include_bytes!("../../../../assets/icons/generic_restore.svg"))
+            }
+            IconName::GenericClose => {
+                Some(include_bytes!("../../../../assets/icons/generic_close.svg"))
+            }
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
 
-    use strum::{IntoEnumIterator as _, ParseError};
+    use strum::ParseError;
 
     use crate::IconName;
 
-    #[test]
-    fn test_all_icons_exist() {
-        let asset_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+    /// 资产根：`CARGO_MANIFEST_DIR`（`packages/ui/icons`）上跳三层到仓库根。
+    fn asset_path() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../assets")
+    }
 
-        for icon in IconName::iter() {
-            let icon_path = asset_path.join(&*icon.path());
+    /// 内嵌的四枚窗口控制图标必须真的在资产目录里（`svg_bytes()` 的
+    /// `include_bytes!` 与这里引用的是同一批文件，缺一个都编不过或测不过）。
+    ///
+    /// 全套枚举对应的全量 SVG 还在 gpui_learn，搬齐之后这里才能恢复
+    /// 「`IconName::iter()` 全量存在」的断言 —— 那之前测只会整片红。
+    #[test]
+    fn test_embedded_icons_exist() {
+        for icon in [
+            IconName::GenericMinimize,
+            IconName::GenericMaximize,
+            IconName::GenericRestore,
+            IconName::GenericClose,
+        ] {
+            let icon_path = asset_path().join(&*icon.path());
             assert!(
                 icon_path.exists(),
                 "Icon {icon:?} does not exist at {icon_path:?}",
@@ -337,9 +374,11 @@ mod tests {
         }
     }
 
+    /// 资产目录里出现的每个 SVG 文件名都必须能解析回枚举 —— 防止放了文件
+    /// 却忘了建变体（反向保障：`path()` 生成的路径一定能命中真实文件）。
     #[test]
     fn test_no_dangling_icons() -> Result<(), ParseError> {
-        let icons_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/icons");
+        let icons_dir = asset_path().join("icons");
 
         for entry in std::fs::read_dir(&icons_dir).expect("failed to read icons directory") {
             let path = entry.expect("failed to read icons directory entry").path();
