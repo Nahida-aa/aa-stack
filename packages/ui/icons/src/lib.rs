@@ -28,6 +28,10 @@ impl IconName {
             IconName::GenericClose => {
                 Some(include_bytes!("../../../../assets/icons/generic_close.svg"))
             }
+            IconName::Menu => Some(include_bytes!("../../../../assets/icons/menu.svg")),
+            IconName::ChevronDown => {
+                Some(include_bytes!("../../../../assets/icons/chevron_down.svg"))
+            }
             _ => None,
         }
     }
